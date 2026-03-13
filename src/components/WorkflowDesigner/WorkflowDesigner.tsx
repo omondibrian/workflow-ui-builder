@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { WorkflowNode, Connection, Point, StickyNote as StickyNoteType, WatchItem, ExecutionRun, Breakpoint, DataMapping } from './types';
+import { WorkflowNode, Connection, Point, StickyNote as StickyNoteType, WatchItem, ExecutionRun, Breakpoint, DataMapping, LogEntry, NodeStatus, StackFrame, WorkflowSecret } from './types';
 import { DEMO_NODES, DEMO_CONNECTIONS, INITIAL_CONTEXT } from './constants';
 import {
   useWorkflowSimulation,
@@ -19,6 +19,7 @@ import {
   Minimap,
   DataMappingPanel,
   WorkflowListPanel,
+  SecretsPanel,
 } from './components';
 import { uid } from './utils';
 import {
@@ -28,12 +29,14 @@ import {
   ensureDemoWorkflow,
   setLastOpened,
 } from './workflowStorage';
+import { WorkflowExecutor } from './workflowExecutor';
 
 const WorkflowDesigner: React.FC = () => {
   // State
   const [nodes, setNodes] = useState<WorkflowNode[]>(DEMO_NODES);
   const [conns, setConns] = useState<Connection[]>(DEMO_CONNECTIONS);
   const [sel, setSel] = useState<string | null>(null);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [off, setOff] = useState<Point>({ x: 20, y: 20 });
   const [wfName, setWfName] = useState<string>('Invoice Approval');
   const [dbgOpen, setDbgOpen] = useState<boolean>(true);
@@ -50,8 +53,19 @@ const WorkflowDesigner: React.FC = () => {
   // Persistence and panels state
   const [workflowId, setWorkflowId] = useState<string | undefined>();
   const [showWorkflowList, setShowWorkflowList] = useState(false);
+  const [showSecretsPanel, setShowSecretsPanel] = useState(false);
+  const [secrets, setSecrets] = useState<WorkflowSecret[]>([]);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [isRealExecuting, setIsRealExecuting] = useState(false);
+  const [realExecLog, setRealExecLog] = useState<LogEntry[]>([]);
+  
+  // Real execution UI sync state
+  const [realSimNodes, setRealSimNodes] = useState<Record<string, NodeStatus>>({});
+  const [realSimConns, setRealSimConns] = useState<Set<string>>(new Set());
+  const [realActiveNid, setRealActiveNid] = useState<string | null>(null);
+  const [realCallStack, setRealCallStack] = useState<StackFrame[]>([]);
+  const [realExecCtx, setRealExecCtx] = useState<Record<string, unknown>>({});
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -74,9 +88,19 @@ const WorkflowDesigner: React.FC = () => {
   useEffect(() => {
     const savedWorkflow = getLastOpenedWorkflow();
     if (savedWorkflow) {
-      setNodes(savedWorkflow.data.nodes);
-      setConns(savedWorkflow.data.connections);
-      setStickyNotes(savedWorkflow.data.stickyNotes || []);
+      // Deep copy to ensure mutability
+      const copiedNodes = savedWorkflow.data.nodes.map(node => ({
+        ...node,
+        config: { ...node.config }
+      }));
+      const copiedConns = savedWorkflow.data.connections.map(conn => ({ ...conn }));
+      const copiedNotes = (savedWorkflow.data.stickyNotes || []).map(note => ({ ...note }));
+      const copiedSecrets = (savedWorkflow.data.secrets || []).map(secret => ({ ...secret }));
+      
+      setNodes(copiedNodes);
+      setConns(copiedConns);
+      setStickyNotes(copiedNotes);
+      setSecrets(copiedSecrets);
       setWfName(savedWorkflow.name);
       setWorkflowId(savedWorkflow.id);
     } else {
@@ -90,29 +114,30 @@ const WorkflowDesigner: React.FC = () => {
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       if (nodes.length > 0) {
-        const saved = saveWorkflow(wfName, nodes, conns, stickyNotes, INITIAL_CONTEXT, workflowId);
+        const saved = saveWorkflow(wfName, nodes, conns, stickyNotes, INITIAL_CONTEXT, workflowId, secrets);
         setWorkflowId(saved.id);
         setLastSaved(new Date().toLocaleTimeString());
       }
     }, 2000);
     return () => clearTimeout(timeoutId);
-  }, [nodes, conns, stickyNotes, wfName, workflowId]);
+  }, [nodes, conns, stickyNotes, wfName, workflowId, secrets]);
 
   // Undo/Redo hook
   const { saveState, undo, redo, canUndo, canRedo } = useUndoRedo({ nodes, conns, setNodes, setConns });
 
   // Zoom hook
-  const { zoom, setZoom, zoomIn, zoomOut, zoomReset, handleWheel } = useZoom();
+  const { zoom, zoomIn, zoomOut, zoomReset, attachWheelListener } = useZoom();
+  const zoomContainerRef = useRef<HTMLDivElement>(null);
+
+  // Attach wheel listener for zoom (non-passive to allow preventDefault)
+  useEffect(() => {
+    return attachWheelListener(zoomContainerRef);
+  }, [attachWheelListener]);
 
   // Multi-select hook
   const {
     selectedIds,
     selectionRect,
-    clipboard,
-    startSelection,
-    updateSelection,
-    endSelection,
-    toggleSelect,
     copySelected,
     paste,
     deleteSelected,
@@ -143,6 +168,131 @@ const WorkflowDesigner: React.FC = () => {
     breakpts,
     setDbgOpen,
   });
+
+  // Real execution handler (actual HTTP calls)
+  const startRealExec = useCallback(async () => {
+    setIsRealExecuting(true);
+    setRealExecLog([]);
+    setRealSimNodes({});
+    setRealSimConns(new Set());
+    setRealActiveNid(null);
+    setRealCallStack([]);
+    setRealExecCtx({});
+    setDbgOpen(true);
+    
+    const startTime = Date.now();
+    const activeConnsSet = new Set<string>();
+    const callStackArr: StackFrame[] = [];
+    const nodePerfMap: Record<string, number> = {};
+    const logEntries: LogEntry[] = [];
+    let nodesExecutedCount = 0;
+    
+    const addLog = (entry: LogEntry) => {
+      logEntries.push(entry);
+      setRealExecLog((prev) => [...prev, entry]);
+    };
+
+    addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'info', msg: '⚡ Starting real execution...', nodeId: null });
+
+    const executor = new WorkflowExecutor(nodes, conns, {
+      mode: 'execute',
+      timeout: 30000,
+      onNodeStart: (nodeId) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node) return;
+        
+        nodesExecutedCount++;
+        
+        // Update UI: set node as running
+        setRealActiveNid(nodeId);
+        setRealSimNodes((prev) => ({ ...prev, [nodeId]: { status: 'running' } }));
+        
+        // Update call stack
+        const frame: StackFrame = { id: nodeId, label: node.label, type: node.type, start: Date.now() };
+        callStackArr.push(frame);
+        setRealCallStack([...callStackArr]);
+        
+        // Find and activate incoming connection
+        const incomingConn = conns.find((c) => c.to === nodeId);
+        if (incomingConn) {
+          activeConnsSet.add(incomingConn.id);
+          setRealSimConns(new Set(activeConnsSet));
+        }
+        
+        addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'info', msg: `→ ${node.label}`, nodeId });
+      },
+      onNodeComplete: (nodeId, result) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node) return;
+        
+        // Calculate duration
+        const frame = callStackArr.find((f) => f.id === nodeId);
+        const duration = frame?.start ? Date.now() - frame.start : 0;
+        
+        // Track in local map for final report
+        nodePerfMap[nodeId] = duration;
+        
+        // Update UI: set node as done
+        setRealSimNodes((prev) => ({ ...prev, [nodeId]: { status: 'done', duration } }));
+        
+        // Remove from call stack
+        const idx = callStackArr.findIndex((f) => f.id === nodeId);
+        if (idx !== -1) callStackArr.splice(idx, 1);
+        setRealCallStack([...callStackArr]);
+        
+        addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'success', msg: `✓ ${node.label} (${duration}ms)`, nodeId });
+        console.log(`Node ${node.label} result:`, result);
+      },
+      onNodeError: (nodeId, error) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        setRealSimNodes((prev) => ({ ...prev, [nodeId]: { status: 'error' } }));
+        
+        // Remove from call stack
+        const idx = callStackArr.findIndex((f) => f.id === nodeId);
+        if (idx !== -1) callStackArr.splice(idx, 1);
+        setRealCallStack([...callStackArr]);
+        
+        addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'error', msg: `✕ ${node?.label || nodeId}: ${error.message}`, nodeId });
+      },
+      onLog: (entry) => {
+        addLog(entry);
+      },
+      onContextUpdate: (ctx) => {
+        setRealExecCtx({ ...ctx });
+        console.log('Context updated:', ctx);
+      },
+    }, secrets);
+
+    let finalContext: Record<string, unknown> = {};
+    let success = true;
+    
+    try {
+      finalContext = await executor.execute(INITIAL_CONTEXT) as Record<string, unknown>;
+      addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'success', msg: '⚡ Execution completed!', nodeId: null });
+      console.log('Final context:', finalContext);
+    } catch (e) {
+      success = false;
+      addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'error', msg: `Execution failed: ${(e as Error).message}`, nodeId: null });
+    }
+
+    // Save execution to history using local variables (React state may be stale)
+    const run: ExecutionRun = {
+      id: uid(),
+      timestamp: new Date().toISOString(),
+      startedAt: new Date(startTime).toISOString(),
+      workflowName: wfName,
+      duration: Date.now() - startTime,
+      status: success ? 'success' : 'error',
+      nodesExecuted: nodesExecutedCount,
+      log: logEntries,
+      context: finalContext,
+      nodePerf: nodePerfMap,
+    };
+    setExecutionHistory((prev) => [run, ...prev].slice(0, 20));
+    
+    setRealActiveNid(null);
+    setIsRealExecuting(false);
+  }, [nodes, conns, setDbgOpen, wfName, secrets]);
 
   // Canvas interactions hook
   const {
@@ -266,9 +416,19 @@ const WorkflowDesigner: React.FC = () => {
 
   // Load a saved workflow from the list
   const loadWorkflow = useCallback((workflow: SavedWorkflow) => {
-    setNodes(workflow.data.nodes);
-    setConns(workflow.data.connections);
-    setStickyNotes(workflow.data.stickyNotes || []);
+    // Deep copy to ensure mutability
+    const copiedNodes = workflow.data.nodes.map(node => ({
+      ...node,
+      config: { ...node.config }
+    }));
+    const copiedConns = workflow.data.connections.map(conn => ({ ...conn }));
+    const copiedNotes = (workflow.data.stickyNotes || []).map(note => ({ ...note }));
+    const copiedSecrets = (workflow.data.secrets || []).map(secret => ({ ...secret }));
+    
+    setNodes(copiedNodes);
+    setConns(copiedConns);
+    setStickyNotes(copiedNotes);
+    setSecrets(copiedSecrets);
     setWfName(workflow.name);
     setWorkflowId(workflow.id);
     setLastOpened(workflow.id);
@@ -281,6 +441,7 @@ const WorkflowDesigner: React.FC = () => {
     setNodes([]);
     setConns([]);
     setStickyNotes([]);
+    setSecrets([]);
     setWfName('New Workflow');
     setWorkflowId(undefined);
     setShowWorkflowList(false);
@@ -295,18 +456,25 @@ const WorkflowDesigner: React.FC = () => {
     saveState();
   }, [saveState]);
 
-  // Open data mapping panel for a connection
-  const openDataMapping = useCallback((connectionId: string) => {
-    const connection = conns.find((c) => c.id === connectionId);
-    if (connection) {
-      setEditingConnection(connection);
-    }
-  }, [conns]);
-
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept keyboard shortcuts when focused on input elements
+      const activeElement = document.activeElement;
+      const isInputFocused = activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.tagName === 'SELECT' ||
+        (activeElement as HTMLElement).isContentEditable ||
+        activeElement.closest('.monaco-editor') // Monaco editor
+      );
+
       if (e.ctrlKey || e.metaKey) {
+        // Allow copy/paste/cut/select-all in input fields
+        if (isInputFocused && (e.key === 'c' || e.key === 'v' || e.key === 'x' || e.key === 'a')) {
+          return; // Let browser handle it
+        }
+        
         if (e.key === 'z' && !e.shiftKey) {
           e.preventDefault();
           undo();
@@ -322,6 +490,10 @@ const WorkflowDesigner: React.FC = () => {
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Allow delete/backspace in input fields
+        if (isInputFocused) {
+          return; // Let browser handle it
+        }
         if (selectedIds.size > 0) {
           e.preventDefault();
           deleteSelected();
@@ -332,8 +504,18 @@ const WorkflowDesigner: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo, copySelected, paste, deleteSelected, selectedIds]);
 
-  const selectedNode = nodes.find((n) => n.id === sel);
+  const editingNode = nodes.find((n) => n.id === editingNodeId);
   const simRunning = simState === 'running' || simState === 'paused';
+
+  // Handle node double-click to open properties panel
+  const handleNodeDoubleClick = useCallback((nodeId: string) => {
+    setEditingNodeId(nodeId);
+  }, []);
+
+  // Close properties panel
+  const closePropertiesPanel = useCallback(() => {
+    setEditingNodeId(null);
+  }, []);
 
   return (
     <div
@@ -359,6 +541,8 @@ const WorkflowDesigner: React.FC = () => {
         simState={simState}
         simRunning={simRunning}
         startSim={startSim}
+        startRealExec={startRealExec}
+        isRealExecuting={isRealExecuting}
         stopSim={stopSim}
         pauseResume={pauseResume}
         stepNext={stepNext}
@@ -398,11 +582,8 @@ const WorkflowDesigner: React.FC = () => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
           {/* Canvas with zoom */}
           <div
+            ref={zoomContainerRef}
             style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
-            onWheel={(e) => {
-              e.preventDefault();
-              handleWheel(e.nativeEvent as WheelEvent);
-            }}
           >
             <div
               style={{
@@ -426,12 +607,12 @@ const WorkflowDesigner: React.FC = () => {
                 pan={pan}
                 conn={conn}
                 mxy={mxy}
-                simNodes={simNodes}
-                simConns={simConns}
-                activeNid={activeNid}
+                simNodes={isRealExecuting || realExecLog.length > 0 ? realSimNodes : simNodes}
+                simConns={isRealExecuting || realExecLog.length > 0 ? realSimConns : simConns}
+                activeNid={isRealExecuting ? realActiveNid : activeNid}
                 debugMode={debugMode}
                 breakpts={breakpts}
-                simRunning={simRunning}
+                simRunning={simRunning || isRealExecuting}
                 onMove={onMove}
                 onUp={onUp}
                 onDown={onDown}
@@ -442,6 +623,7 @@ const WorkflowDesigner: React.FC = () => {
                 endConn={endConn}
                 delNode={delNode}
                 toggleBP={toggleBP}
+                onNodeDoubleClick={handleNodeDoubleClick}
               />
               
               {/* Sticky Notes */}
@@ -488,12 +670,12 @@ const WorkflowDesigner: React.FC = () => {
           {dbgOpen && (
             <DebugPanel
               nodes={nodes}
-              simState={simState}
-              simNodes={simNodes}
-              activeNid={activeNid}
-              execCtx={execCtx}
-              execLog={execLog}
-              callStack={callStack}
+              simState={isRealExecuting ? 'running' : simState}
+              simNodes={isRealExecuting || realExecLog.length > 0 ? realSimNodes : simNodes}
+              activeNid={isRealExecuting ? realActiveNid : activeNid}
+              execCtx={isRealExecuting || realExecLog.length > 0 ? realExecCtx : execCtx}
+              execLog={isRealExecuting || realExecLog.length > 0 ? realExecLog : execLog}
+              callStack={isRealExecuting || realExecLog.length > 0 ? realCallStack : callStack}
               breakpts={breakpts}
               conditionalBreakpoints={conditionalBreakpoints}
               debugMode={debugMode}
@@ -505,16 +687,16 @@ const WorkflowDesigner: React.FC = () => {
               addWatch={addWatch}
               removeWatch={removeWatch}
               replayRun={replayRun}
-              clearLog={clearLog}
+              clearLog={() => { clearLog(); setRealExecLog([]); setRealSimNodes({}); setRealSimConns(new Set()); setRealCallStack([]); }}
               setSel={setSel}
             />
           )}
         </div>
 
         {/* Properties Panel */}
-        {selectedNode && (
+        {editingNode && (
           <PropertiesPanel
-            selectedNode={selectedNode}
+            selectedNode={editingNode}
             nodes={nodes}
             conns={conns}
             simNodes={simNodes}
@@ -522,8 +704,10 @@ const WorkflowDesigner: React.FC = () => {
             breakpts={breakpts}
             toggleBP={toggleBP}
             setNodes={setNodes}
-            delNode={delNode}
+            delNode={(id) => { delNode(id); closePropertiesPanel(); }}
             delConn={delConn}
+            onClose={closePropertiesPanel}
+            secrets={secrets}
           />
         )}
       </div>
@@ -569,6 +753,27 @@ const WorkflowDesigner: React.FC = () => {
         📁 Workflows
       </button>
 
+      {/* Secrets button */}
+      <button
+        onClick={() => setShowSecretsPanel(true)}
+        style={{
+          position: 'fixed',
+          bottom: 12,
+          left: 120,
+          background: '#161b22',
+          border: '1px solid #30363d',
+          borderRadius: 4,
+          padding: '6px 12px',
+          fontSize: 11,
+          color: '#8b949e',
+          cursor: 'pointer',
+          zIndex: 100,
+          fontFamily: 'monospace',
+        }}
+      >
+        🔐 Secrets {secrets.length > 0 && `(${secrets.length})`}
+      </button>
+
       {/* Workflow List Panel */}
       {showWorkflowList && (
         <WorkflowListPanel
@@ -592,6 +797,14 @@ const WorkflowDesigner: React.FC = () => {
           onClose={() => setEditingConnection(null)}
         />
       )}
+
+      {/* Secrets Panel */}
+      <SecretsPanel
+        secrets={secrets}
+        onSecretsChange={setSecrets}
+        isOpen={showSecretsPanel}
+        onClose={() => setShowSecretsPanel(false)}
+      />
     </div>
   );
 };
