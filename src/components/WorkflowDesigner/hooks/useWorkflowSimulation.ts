@@ -132,6 +132,26 @@ export const useWorkflowSimulation = ({
         const act = node.config?.actionType || 'Call API';
         const ep = node.config?.endpoint || '(none)';
         log('info', `${act} → ${ep}`, nid);
+        
+        // Simulate potential error (10% chance for demo)
+        const hasError = Math.random() < 0.1;
+        if (hasError) {
+          log('error', `Task failed — simulated error`, nid);
+          setNS(nid, 'error', { duration: Date.now() - t0 });
+          stackR.current = stackR.current.filter((s) => s.id !== nid);
+          setCallStack([...stackR.current]);
+          
+          // Find error port connection (port 1)
+          const errorConn = css.find((c) => c.from === nid && c.port === 1);
+          if (errorConn) {
+            scR.current.add(errorConn.id);
+            setSimConns(new Set(scR.current));
+            await sleepMs(160);
+            await execNode(errorConn.to, nds, css);
+          }
+          return;
+        }
+        
         if (/validate/i.test(node.label)) mutCtx({ validated: true, validation_score: 0.98 });
         if (/approve/i.test(node.label)) mutCtx({ approved: true, approved_at: new Date().toISOString() });
         if (/ledger/i.test(node.label)) mutCtx({ ledger_id: `LDG-${Math.floor(Math.random() * 9000 + 1000)}`, posted: true });
@@ -153,6 +173,16 @@ export const useWorkflowSimulation = ({
         mutCtx({ _last_decision: cond, _decision_result: result });
       } else if (node.type === 'parallel') {
         log('info', 'Spawning parallel branches', nid);
+      } else if (node.type === 'loop') {
+        const loopCount = node.config?.loopCount || 3;
+        const exitCond = node.config?.exitCondition || '';
+        log('info', `Loop: ${loopCount} iterations, exit: "${exitCond || 'none'}"`, nid);
+        mutCtx({ _loop_iteration: 0, _loop_max: loopCount });
+      } else if (node.type === 'delay') {
+        const delayMs = node.config?.delayMs || 1000;
+        log('info', `Delay: waiting ${delayMs}ms`, nid);
+        await sleepMs(delayMs);
+        log('success', `Delay complete`, nid);
       } else if (node.type === 'end') {
         mutCtx({ _status: 'COMPLETED', _ended: new Date().toISOString() });
         log('success', '✓ Workflow completed', nid);
@@ -186,6 +216,57 @@ export const useWorkflowSimulation = ({
         setSimConns(new Set(scR.current));
         await sleepMs(120);
         await Promise.all(outs.map((c) => execNode(c.to, nds, css)));
+      } else if (node.type === 'loop') {
+        const loopCount = node.config?.loopCount || 3;
+        const exitCond = node.config?.exitCondition || '';
+        const bodyConn = outs.find((c) => c.port === 0);
+        const exitConn = outs.find((c) => c.port === 1);
+        
+        for (let i = 0; i < loopCount; i++) {
+          if (stopRef.current) return;
+          mutCtx({ _loop_iteration: i + 1 });
+          log('info', `Loop iteration ${i + 1}/${loopCount}`, nid);
+          
+          // Check exit condition
+          if (exitCond) {
+            let shouldExit = false;
+            try {
+              // eslint-disable-next-line no-new-func
+              shouldExit = Function('ctx', `with(ctx){return ${exitCond};}`)(ctxR.current);
+            } catch {
+              // ignore
+            }
+            if (shouldExit) {
+              log('info', `Loop exit condition met: ${exitCond}`, nid);
+              break;
+            }
+          }
+          
+          // Execute body
+          if (bodyConn) {
+            scR.current.add(bodyConn.id);
+            setSimConns(new Set(scR.current));
+            await sleepMs(120);
+            await execNode(bodyConn.to, nds, css);
+          }
+        }
+        
+        // Exit loop
+        if (exitConn) {
+          scR.current.add(exitConn.id);
+          setSimConns(new Set(scR.current));
+          await sleepMs(120);
+          await execNode(exitConn.to, nds, css);
+        }
+      } else if (node.type === 'task') {
+        // Success path only (error handled above)
+        const successConn = outs.find((c) => c.port === 0) || outs[0];
+        if (successConn) {
+          scR.current.add(successConn.id);
+          setSimConns(new Set(scR.current));
+          await sleepMs(160);
+          await execNode(successConn.to, nds, css);
+        }
       } else {
         for (const c of outs) {
           scR.current.add(c.id);

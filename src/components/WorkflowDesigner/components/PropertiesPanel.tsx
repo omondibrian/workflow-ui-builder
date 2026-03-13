@@ -40,17 +40,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const nodeStatus = simNodes[selectedNode.id];
   const isBP = breakpts.has(selectedNode.id);
 
-  const updateLabel = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const updateConfig = (key: string, value: string | number) => {
     setNodes((ns) =>
-      ns.map((n) => (n.id === selectedNode.id ? { ...n, label: e.target.value } : n))
+      ns.map((n) =>
+        n.id === selectedNode.id ? { ...n, config: { ...n.config, [key]: value } } : n
+      )
     );
   };
 
-  const updateCondition = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const updateLabel = (e: React.ChangeEvent<HTMLInputElement>) => {
     setNodes((ns) =>
-      ns.map((n) =>
-        n.id === selectedNode.id ? { ...n, config: { ...n.config, condition: e.target.value } } : n
-      )
+      ns.map((n) => (n.id === selectedNode.id ? { ...n, label: e.target.value } : n))
     );
   };
 
@@ -93,8 +93,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           <input
             placeholder="amount > 10000"
             onMouseDown={(e) => e.stopPropagation()}
-            defaultValue={selectedNode.config?.condition || ''}
-            onChange={updateCondition}
+            value={selectedNode.config?.condition || ''}
+            onChange={(e) => updateConfig('condition', e.target.value)}
             style={INPUT_STYLE}
           />
           <div style={{ fontSize: 8, color: '#484f58', marginTop: 3 }}>Evaluates against execution context</div>
@@ -105,9 +105,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {selectedNode.type === 'trigger' && (
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>TRIGGER TYPE</div>
-          <select onMouseDown={(e) => e.stopPropagation()} style={SELECT_STYLE}>
+          <select
+            value={selectedNode.config?.triggerType || TRIGGER_TYPES[0]}
+            onMouseDown={(e) => e.stopPropagation()}
+            onChange={(e) => updateConfig('triggerType', e.target.value)}
+            style={SELECT_STYLE}
+          >
             {TRIGGER_TYPES.map((o) => (
-              <option key={o}>{o}</option>
+              <option key={o} value={o}>{o}</option>
             ))}
           </select>
         </div>
@@ -118,17 +123,76 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         <>
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>ACTION TYPE</div>
-            <select onMouseDown={(e) => e.stopPropagation()} style={SELECT_STYLE}>
+            <select
+              value={selectedNode.config?.actionType || ACTION_TYPES[0]}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('actionType', e.target.value)}
+              style={SELECT_STYLE}
+            >
               {ACTION_TYPES.map((o) => (
-                <option key={o}>{o}</option>
+                <option key={o} value={o}>{o}</option>
               ))}
             </select>
           </div>
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>ENDPOINT</div>
-            <input placeholder="https://..." onMouseDown={(e) => e.stopPropagation()} style={INPUT_STYLE} />
+            <input
+              placeholder="https://..."
+              value={selectedNode.config?.endpoint || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('endpoint', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ fontSize: 8, color: '#484f58', marginBottom: 10 }}>
+            ⚠ Port 0: Success | Port 1: Error
           </div>
         </>
+      )}
+
+      {/* Loop properties */}
+      {selectedNode.type === 'loop' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>LOOP COUNT</div>
+            <input
+              type="number"
+              placeholder="3"
+              value={selectedNode.config?.loopCount || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('loopCount', parseInt(e.target.value) || 0)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>EXIT CONDITION</div>
+            <input
+              placeholder="done === true"
+              value={selectedNode.config?.exitCondition || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('exitCondition', e.target.value)}
+              style={INPUT_STYLE}
+            />
+            <div style={{ fontSize: 8, color: '#484f58', marginTop: 3 }}>
+              Port 0: Body (loops) | Port 1: Exit
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Delay properties */}
+      {selectedNode.type === 'delay' && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>DELAY (ms)</div>
+          <input
+            type="number"
+            placeholder="1000"
+            value={selectedNode.config?.delayMs || ''}
+            onMouseDown={(e) => e.stopPropagation()}
+            onChange={(e) => updateConfig('delayMs', parseInt(e.target.value) || 0)}
+            style={INPUT_STYLE}
+          />
+        </div>
       )}
 
       {/* Runtime status */}

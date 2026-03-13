@@ -4,3 +4,5 @@ export { WorkflowCanvas } from './WorkflowCanvas';
 export { WorkflowNodeComponent } from './WorkflowNode';
 export { DebugPanel } from './DebugPanel';
 export { PropertiesPanel } from './PropertiesPanel';
+export { StickyNote } from './StickyNote';
+export { Minimap } from './Minimap';

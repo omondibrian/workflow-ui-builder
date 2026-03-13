@@ -6,9 +6,11 @@ export const NODE_HEIGHT = 58;
 
 export const TYPES: Record<NodeType, NodeTypeConfig> = {
   trigger:  { color: '#10b981', label: 'Trigger',  outs: 1 },
-  task:     { color: '#3b82f6', label: 'Task',     outs: 1 },
+  task:     { color: '#3b82f6', label: 'Task',     outs: 2, errorPort: true },
   decision: { color: '#f59e0b', label: 'Decision', outs: 2 },
   parallel: { color: '#a855f7', label: 'Parallel', outs: 1 },
+  loop:     { color: '#22d3ee', label: 'Loop',     outs: 2 },
+  delay:    { color: '#c084fc', label: 'Delay',    outs: 1 },
   end:      { color: '#ef4444', label: 'End',      outs: 0 },
 };
 
@@ -17,6 +19,8 @@ export const ICONS: Record<NodeType, string> = {
   task: '◉',
   decision: '◆',
   parallel: '⊞',
+  loop: '↺',
+  delay: '⏱',
   end: '■',
 };
 
@@ -25,6 +29,8 @@ export const DESCRIPTIONS: Record<NodeType, string> = {
   task: 'action step',
   decision: 'if/else',
   parallel: 'concurrent',
+  loop: 'iterate',
+  delay: 'wait time',
   end: 'completion',
 };
 

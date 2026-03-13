@@ -1,14 +1,24 @@
-import React, { useState, useRef } from 'react';
-import { WorkflowNode, Connection, Point } from './types';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { WorkflowNode, Connection, Point, StickyNote as StickyNoteType, WatchItem, ExecutionRun, Breakpoint } from './types';
 import { DEMO_NODES, DEMO_CONNECTIONS } from './constants';
-import { useWorkflowSimulation, useCanvasInteractions } from './hooks';
+import {
+  useWorkflowSimulation,
+  useCanvasInteractions,
+  useUndoRedo,
+  useMultiSelect,
+  useZoom,
+  useWorkflowLinting,
+} from './hooks';
 import {
   Toolbar,
   NodePalette,
   WorkflowCanvas,
   DebugPanel,
   PropertiesPanel,
+  StickyNote,
+  Minimap,
 } from './components';
+import { uid } from './utils';
 
 const WorkflowDesigner: React.FC = () => {
   // State
@@ -20,8 +30,53 @@ const WorkflowDesigner: React.FC = () => {
   const [dbgOpen, setDbgOpen] = useState<boolean>(true);
   const [debugMode, setDebugMode] = useState<boolean>(false);
   const [breakpts, setBreakpts] = useState<Set<string>>(new Set(['n3']));
+  
+  // New feature states
+  const [stickyNotes, setStickyNotes] = useState<StickyNoteType[]>([]);
+  const [watchItems, setWatchItems] = useState<WatchItem[]>([]);
+  const [executionHistory, setExecutionHistory] = useState<ExecutionRun[]>([]);
+  const [conditionalBreakpoints, setConditionalBreakpoints] = useState<Map<string, Breakpoint>>(new Map());
+  const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
 
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Update viewport size
+  useEffect(() => {
+    const updateSize = () => {
+      if (canvasRef.current) {
+        setViewportSize({
+          width: canvasRef.current.clientWidth,
+          height: canvasRef.current.clientHeight,
+        });
+      }
+    };
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
+  // Undo/Redo hook
+  const { saveState, undo, redo, canUndo, canRedo } = useUndoRedo({ nodes, conns, setNodes, setConns });
+
+  // Zoom hook
+  const { zoom, setZoom, zoomIn, zoomOut, zoomReset, handleWheel } = useZoom();
+
+  // Multi-select hook
+  const {
+    selectedIds,
+    selectionRect,
+    clipboard,
+    startSelection,
+    updateSelection,
+    endSelection,
+    toggleSelect,
+    copySelected,
+    paste,
+    deleteSelected,
+  } = useMultiSelect({ nodes, conns, setNodes, setConns, zoom, saveState });
+
+  // Workflow linting hook
+  const { lintIssues, hasErrors, hasWarnings } = useWorkflowLinting({ nodes, conns });
 
   // Simulation hook
   const {
@@ -85,6 +140,116 @@ const WorkflowDesigner: React.FC = () => {
     });
   };
 
+  // Conditional breakpoint functions
+  const setConditionalBP = useCallback((nodeId: string, condition: string) => {
+    setConditionalBreakpoints((prev) => {
+      const next = new Map(prev);
+      next.set(nodeId, { nodeId, condition, enabled: true });
+      return next;
+    });
+    setBreakpts((bp) => new Set(Array.from(bp).concat(nodeId)));
+  }, []);
+
+  const removeConditionalBP = useCallback((nodeId: string) => {
+    setConditionalBreakpoints((prev) => {
+      const next = new Map(prev);
+      next.delete(nodeId);
+      return next;
+    });
+  }, []);
+
+  // Watch panel functions
+  const addWatch = useCallback((expression: string) => {
+    setWatchItems((prev) => [...prev, { id: uid(), expression, pinned: false }]);
+  }, []);
+
+  const removeWatch = useCallback((id: string) => {
+    setWatchItems((prev) => prev.filter((w) => w.id !== id));
+  }, []);
+
+  // Execution history replay
+  const replayRun = useCallback((runId: string) => {
+    // In a real implementation, this would restore the state from that run
+    console.log('Replaying run:', runId);
+  }, []);
+
+  // Sticky note functions
+  const addStickyNote = useCallback(() => {
+    const newNote: StickyNoteType = {
+      id: uid(),
+      x: 100 + stickyNotes.length * 20,
+      y: 100 + stickyNotes.length * 20,
+      text: '',
+      color: '#fef08a',
+      width: 150,
+      height: 100,
+    };
+    setStickyNotes((prev) => [...prev, newNote]);
+  }, [stickyNotes.length]);
+
+  const updateStickyNote = useCallback((id: string, updates: Partial<StickyNoteType>) => {
+    setStickyNotes((prev) =>
+      prev.map((note) => (note.id === id ? { ...note, ...updates } : note))
+    );
+  }, []);
+
+  const deleteStickyNote = useCallback((id: string) => {
+    setStickyNotes((prev) => prev.filter((note) => note.id !== id));
+  }, []);
+
+  // Minimap viewport change
+  const handleViewportChange = useCallback((x: number, y: number) => {
+    setOff({ x, y });
+  }, []);
+
+  // Import workflow JSON
+  const importWorkflow = useCallback((json: string) => {
+    try {
+      const data = JSON.parse(json);
+      if (data.nodes && Array.isArray(data.nodes)) {
+        setNodes(data.nodes);
+      }
+      if (data.connections && Array.isArray(data.connections)) {
+        setConns(data.connections);
+      }
+      if (data.name) {
+        setWfName(data.name);
+      }
+      saveState();
+    } catch (e) {
+      console.error('Failed to import workflow:', e);
+    }
+  }, [saveState]);
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          undo();
+        } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+          e.preventDefault();
+          redo();
+        } else if (e.key === 'c') {
+          e.preventDefault();
+          copySelected();
+        } else if (e.key === 'v') {
+          e.preventDefault();
+          paste();
+        }
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          deleteSelected();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo, copySelected, paste, deleteSelected, selectedIds]);
+
   const selectedNode = nodes.find((n) => n.id === sel);
   const simRunning = simState === 'running' || simState === 'paused';
 
@@ -121,6 +286,19 @@ const WorkflowDesigner: React.FC = () => {
         nodes={nodes}
         conns={conns}
         execCtx={execCtx}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        undo={undo}
+        redo={redo}
+        zoom={zoom}
+        zoomIn={zoomIn}
+        zoomOut={zoomOut}
+        zoomReset={zoomReset}
+        hasLintErrors={hasErrors}
+        hasLintWarnings={hasWarnings}
+        lintIssues={lintIssues}
+        addStickyNote={addStickyNote}
+        importWorkflow={importWorkflow}
       />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -135,36 +313,91 @@ const WorkflowDesigner: React.FC = () => {
         />
 
         {/* Canvas + Debug Panel column */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
           {/* Canvas */}
-          <WorkflowCanvas
-            canvasRef={canvasRef}
-            nodes={nodes}
-            conns={conns}
-            off={off}
-            sel={sel}
-            hover={hover}
-            drag={drag}
-            pan={pan}
-            conn={conn}
-            mxy={mxy}
-            simNodes={simNodes}
-            simConns={simConns}
-            activeNid={activeNid}
-            debugMode={debugMode}
-            breakpts={breakpts}
-            simRunning={simRunning}
-            onMove={onMove}
-            onUp={onUp}
-            onDown={onDown}
-            onDrop={onDrop}
-            setHover={setHover}
-            startDrag={startDrag}
-            startConn={startConn}
-            endConn={endConn}
-            delNode={delNode}
-            toggleBP={toggleBP}
-          />
+          <div
+            style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
+            onWheel={(e) => {
+              e.preventDefault();
+              handleWheel(e.nativeEvent as WheelEvent);
+            }}
+          >
+            <div
+              style={{
+                transform: `scale(${zoom})`,
+                transformOrigin: '0 0',
+                width: `${100 / zoom}%`,
+                height: `${100 / zoom}%`,
+              }}
+            >
+              <WorkflowCanvas
+                canvasRef={canvasRef}
+                nodes={nodes}
+                conns={conns}
+                off={off}
+                sel={sel}
+                hover={hover}
+                drag={drag}
+                pan={pan}
+                conn={conn}
+                mxy={mxy}
+                simNodes={simNodes}
+                simConns={simConns}
+                activeNid={activeNid}
+                debugMode={debugMode}
+                breakpts={breakpts}
+                simRunning={simRunning}
+                onMove={onMove}
+                onUp={onUp}
+                onDown={onDown}
+                onDrop={onDrop}
+                setHover={setHover}
+                startDrag={startDrag}
+                startConn={startConn}
+                endConn={endConn}
+                delNode={delNode}
+                toggleBP={toggleBP}
+              />
+              
+              {/* Sticky Notes */}
+              {stickyNotes.map((note) => (
+                <StickyNote
+                  key={note.id}
+                  note={note}
+                  zoom={zoom}
+                  onUpdate={updateStickyNote}
+                  onDelete={deleteStickyNote}
+                />
+              ))}
+              
+              {/* Selection Rectangle */}
+              {selectionRect && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: selectionRect.x,
+                    top: selectionRect.y,
+                    width: selectionRect.width,
+                    height: selectionRect.height,
+                    border: '1px dashed #58a6ff',
+                    background: 'rgba(88, 166, 255, 0.1)',
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
+            </div>
+            
+            {/* Minimap */}
+            <Minimap
+              nodes={nodes}
+              conns={conns}
+              zoom={zoom}
+              panOffset={off}
+              viewportWidth={viewportSize.width}
+              viewportHeight={viewportSize.height}
+              onViewportChange={handleViewportChange}
+            />
+          </div>
 
           {/* Debug Panel */}
           {dbgOpen && (
@@ -177,8 +410,16 @@ const WorkflowDesigner: React.FC = () => {
               execLog={execLog}
               callStack={callStack}
               breakpts={breakpts}
+              conditionalBreakpoints={conditionalBreakpoints}
               debugMode={debugMode}
+              watchItems={watchItems}
+              executionHistory={executionHistory}
               toggleBP={toggleBP}
+              setConditionalBP={setConditionalBP}
+              removeConditionalBP={removeConditionalBP}
+              addWatch={addWatch}
+              removeWatch={removeWatch}
+              replayRun={replayRun}
               clearLog={clearLog}
               setSel={setSel}
             />

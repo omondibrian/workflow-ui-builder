@@ -3,6 +3,9 @@ import { TYPES, NODE_WIDTH, NODE_HEIGHT } from './constants';
 
 export const generateId = (): string => Math.random().toString(36).slice(2, 7);
 
+// Alias for generateId
+export const uid = generateId;
+
 export const getTimestamp = (): string => new Date().toISOString().slice(11, 23);
 
 export const getOutputPort = (node: WorkflowNode, port: number): Point => {
@@ -31,6 +34,8 @@ export const getExecutionDelay = (type: NodeType): number => {
     task: 800,
     decision: 550,
     parallel: 350,
+    loop: 300,
+    delay: 100,
     end: 400,
   };
   return delays[type] || 600;

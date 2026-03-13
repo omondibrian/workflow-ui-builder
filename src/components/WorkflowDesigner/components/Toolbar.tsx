@@ -1,5 +1,5 @@
-import React from 'react';
-import { SimState, WorkflowNode, Connection, ExecutionContext } from '../types';
+import React, { useRef } from 'react';
+import { SimState, WorkflowNode, Connection, ExecutionContext, LintIssue } from '../types';
 import { BUTTON_STYLE, DEMO_NODES, DEMO_CONNECTIONS } from '../constants';
 
 interface ToolbarProps {
@@ -21,6 +21,20 @@ interface ToolbarProps {
   nodes: WorkflowNode[];
   conns: Connection[];
   execCtx: ExecutionContext;
+  // New props
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
+  zoom: number;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
+  hasLintErrors: boolean;
+  hasLintWarnings: boolean;
+  lintIssues: LintIssue[];
+  addStickyNote: () => void;
+  importWorkflow: (json: string) => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -42,7 +56,22 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   nodes,
   conns,
   execCtx,
+  canUndo,
+  canRedo,
+  undo,
+  redo,
+  zoom,
+  zoomIn,
+  zoomOut,
+  zoomReset,
+  hasLintErrors,
+  hasLintWarnings,
+  lintIssues,
+  addStickyNote,
+  importWorkflow,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const exportJSON = () => {
     const data = {
       workflow: wfName,
@@ -55,6 +84,26 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     a.download = 'workflow.json';
     a.click();
+  };
+
+  const handleImport = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const content = ev.target?.result as string;
+        importWorkflow(content);
+      };
+      reader.readAsText(file);
+    }
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleReset = () => {
@@ -84,6 +133,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         flexWrap: 'wrap',
       }}
     >
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileChange}
+        style={{ display: 'none' }}
+      />
+
       <span style={{ color: '#10b981', fontSize: 11, letterSpacing: 3, opacity: 0.8 }}>⬡ WF</span>
       <input
         value={wfName}
@@ -102,7 +160,80 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           padding: '2px 0',
         }}
       />
+
+      {/* Lint indicator */}
+      {(hasLintErrors || hasLintWarnings) && (
+        <span
+          title={lintIssues.map((i) => `${i.severity}: ${i.message}`).join('\n')}
+          style={{
+            fontSize: 10,
+            color: hasLintErrors ? '#f85149' : '#f59e0b',
+            cursor: 'help',
+          }}
+        >
+          {hasLintErrors ? '⚠' : '⚡'} {lintIssues.length}
+        </span>
+      )}
+
       <div style={{ flex: 1 }} />
+
+      {/* Undo/Redo */}
+      <button
+        onClick={undo}
+        disabled={!canUndo}
+        title="Undo (Ctrl+Z)"
+        style={{
+          ...BUTTON_STYLE,
+          opacity: canUndo ? 1 : 0.4,
+          cursor: canUndo ? 'pointer' : 'not-allowed',
+        }}
+      >
+        ↩
+      </button>
+      <button
+        onClick={redo}
+        disabled={!canRedo}
+        title="Redo (Ctrl+Y)"
+        style={{
+          ...BUTTON_STYLE,
+          opacity: canRedo ? 1 : 0.4,
+          cursor: canRedo ? 'pointer' : 'not-allowed',
+        }}
+      >
+        ↪
+      </button>
+
+      {/* Zoom controls */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          borderLeft: '1px solid #30363d',
+          paddingLeft: 8,
+          marginLeft: 4,
+        }}
+      >
+        <button onClick={zoomOut} title="Zoom Out" style={BUTTON_STYLE}>
+          −
+        </button>
+        <span
+          onClick={zoomReset}
+          title="Reset Zoom"
+          style={{ fontSize: 10, color: '#8b949e', cursor: 'pointer', minWidth: 40, textAlign: 'center' }}
+        >
+          {Math.round(zoom * 100)}%
+        </span>
+        <button onClick={zoomIn} title="Zoom In" style={BUTTON_STYLE}>
+          +
+        </button>
+      </div>
+
+      {/* Sticky note button */}
+      <button onClick={addStickyNote} title="Add Sticky Note" style={BUTTON_STYLE}>
+        📝
+      </button>
+
       <button
         onClick={() => setDebugMode(!debugMode)}
         style={{
@@ -119,6 +250,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       </button>
       <button style={BUTTON_STYLE} onClick={handleClear}>
         Clear
+      </button>
+      <button style={BUTTON_STYLE} onClick={handleImport}>
+        Import
       </button>
       <button style={BUTTON_STYLE} onClick={exportJSON}>
         Export
