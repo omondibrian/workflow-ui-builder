@@ -144,13 +144,13 @@ export const useCanvasInteractions = ({
       }
     };
 
-    // Use capture phase to ensure we get the event first
-    window.addEventListener('mouseup', handleGlobalMouseUp, true);
+    // Use bubble phase so React events on ports fire first
+    window.addEventListener('mouseup', handleGlobalMouseUp);
     window.addEventListener('mousemove', handleGlobalMouseMove, true);
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.removeEventListener('mouseup', handleGlobalMouseUp, true);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
       window.removeEventListener('mousemove', handleGlobalMouseMove, true);
       window.removeEventListener('keydown', handleKeyDown);
     };
@@ -192,20 +192,28 @@ export const useCanvasInteractions = ({
   const endConn = useCallback(
     (e: React.MouseEvent, tn: WorkflowNode) => {
       e.stopPropagation();
-      if (!conn || conn.fromId === tn.id) {
+      // Use ref for immediate access to avoid stale closure issues
+      const currentConn = connRef.current;
+      if (!currentConn || currentConn.fromId === tn.id) {
         setConn(null);
         return;
       }
-      if (!conns.some((c) => c.from === conn.fromId && c.to === tn.id && c.port === conn.port)) {
-        const fn = nodes.find((n) => n.id === conn.fromId);
-        if (fn) {
-          const lbl = TYPES[fn.type].outs > 1 ? (conn.port === 0 ? 'Yes' : 'No') : '';
-          setConns((cs) => [...cs, { id: generateId(), from: conn.fromId, to: tn.id, port: conn.port, label: lbl }]);
+      // Use functional update to get latest connections array
+      setConns((currentConns) => {
+        // Check for duplicate connection
+        if (currentConns.some((c) => c.from === currentConn.fromId && c.to === tn.id && c.port === currentConn.port)) {
+          return currentConns; // Already exists, don't add
         }
-      }
+        const fn = nodes.find((n) => n.id === currentConn.fromId);
+        if (fn) {
+          const lbl = TYPES[fn.type].outs > 1 ? (currentConn.port === 0 ? 'Yes' : 'No') : '';
+          return [...currentConns, { id: generateId(), from: currentConn.fromId, to: tn.id, port: currentConn.port, label: lbl }];
+        }
+        return currentConns;
+      });
       setConn(null);
     },
-    [conn, conns, nodes, setConns]
+    [nodes, setConns]
   );
 
   const delNode = useCallback(
