@@ -7,7 +7,9 @@ import {
   duplicateWorkflow,
   exportWorkflow,
   importWorkflow,
+  saveWorkflow,
 } from '../workflowStorage';
+import { WORKFLOW_TEMPLATES, WorkflowTemplate } from '../workflowTemplates';
 
 interface WorkflowListPanelProps {
   currentWorkflowId?: string;
@@ -67,6 +69,7 @@ export const WorkflowListPanel: React.FC<WorkflowListPanelProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [importJson, setImportJson] = useState('');
   const [showImport, setShowImport] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const refreshList = useCallback(() => {
     setWorkflows(listWorkflows());
@@ -137,6 +140,26 @@ export const WorkflowListPanel: React.FC<WorkflowListPanelProps> = ({
     }
   }, [onSelect, refreshList]);
 
+  const handleUseTemplate = useCallback((template: WorkflowTemplate) => {
+    // Deep copy nodes and connections to ensure they're mutable
+    const copiedNodes = template.nodes.map(node => ({
+      ...node,
+      config: { ...node.config }
+    }));
+    const copiedConnections = template.connections.map(conn => ({ ...conn }));
+    
+    const workflow = saveWorkflow(
+      template.name,
+      copiedNodes,
+      copiedConnections,
+      [],
+      { ...template.initialContext }
+    );
+    refreshList();
+    onSelect(workflow);
+    setShowTemplates(false);
+  }, [onSelect, refreshList]);
+
   const filteredWorkflows = workflows.filter((w) =>
     w.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -195,6 +218,18 @@ export const WorkflowListPanel: React.FC<WorkflowListPanelProps> = ({
               style={{ display: 'none' }}
             />
           </label>
+          <button
+            onClick={() => setShowTemplates(!showTemplates)}
+            style={{ 
+              ...BUTTON_STYLE, 
+              fontSize: 10,
+              background: showTemplates ? '#1a3a5c' : 'transparent',
+              borderColor: showTemplates ? '#3b82f6' : '#30363d',
+              color: showTemplates ? '#3b82f6' : '#8b949e',
+            }}
+          >
+            📋 Templates
+          </button>
         </div>
         
         {showImport && (
@@ -208,6 +243,59 @@ export const WorkflowListPanel: React.FC<WorkflowListPanelProps> = ({
             <button onClick={handleImport} style={BUTTON_STYLE}>
               Import
             </button>
+          </div>
+        )}
+
+        {showTemplates && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: '#484f58', marginBottom: 8, letterSpacing: 1 }}>
+              WORKFLOW TEMPLATES
+            </div>
+            {WORKFLOW_TEMPLATES.map((template) => (
+              <div
+                key={template.id}
+                style={{
+                  ...WORKFLOW_ITEM_STYLE,
+                  marginBottom: 6,
+                }}
+                onClick={() => handleUseTemplate(template)}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ 
+                    color: '#e6edf3', 
+                    fontSize: 11, 
+                    fontWeight: 500,
+                  }}>
+                    {template.name}
+                  </div>
+                  <div style={{ color: '#484f58', fontSize: 9, marginTop: 2 }}>
+                    {template.category} · {template.nodes.length} nodes
+                  </div>
+                  <div style={{ 
+                    color: '#6e7681', 
+                    fontSize: 9, 
+                    marginTop: 3,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {template.description}
+                  </div>
+                </div>
+                <button
+                  style={{ 
+                    ...BUTTON_STYLE, 
+                    padding: '4px 8px', 
+                    fontSize: 10,
+                    background: '#238636',
+                    borderColor: '#238636',
+                    color: '#fff',
+                  }}
+                >
+                  Use
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>

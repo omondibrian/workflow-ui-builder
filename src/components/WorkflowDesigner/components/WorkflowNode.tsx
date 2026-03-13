@@ -19,6 +19,7 @@ interface WorkflowNodeProps {
   onDelete: () => void;
   onStartConn: (e: React.MouseEvent, n: WorkflowNodeType, port: number) => void;
   onEndConn: (e: React.MouseEvent, n: WorkflowNodeType) => void;
+  onDoubleClick?: () => void;
 }
 
 export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
@@ -38,6 +39,7 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
   onDelete,
   onStartConn,
   onEndConn,
+  onDoubleClick,
 }) => {
   const t = TYPES[node.type];
   const status = nodeStatus?.status || 'idle';
@@ -74,7 +76,9 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
         background: getBackground(),
-        border: `1px solid ${getBorderColor()}`,
+        borderTop: `1px solid ${getBorderColor()}`,
+        borderRight: `1px solid ${getBorderColor()}`,
+        borderBottom: `1px solid ${getBorderColor()}`,
         borderLeft: `3px solid ${getLeftBorderColor()}`,
         borderRadius: 5,
         pointerEvents: 'auto',
@@ -82,12 +86,13 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
         alignItems: 'center',
         gap: 8,
         padding: '0 8px 0 10px',
-        transition: 'background 0.2s,border 0.2s',
+        transition: 'background 0.2s',
       }}
       onMouseDown={(e) => onMouseDown(e, node)}
       onMouseUp={(e) => onMouseUp(e, node)}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onDoubleClick={onDoubleClick}
     >
       <span style={{ color: t.color, fontSize: 13, flexShrink: 0 }}>{ICONS[node.type]}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -157,24 +162,39 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
         )}
       </div>
       {/* Input port */}
-      {node.type !== 'trigger' && (
+      {node.type !== 'trigger' && node.type !== 'webhook' && node.type !== 'schedule' && (
         <div
-          data-port="1"
+          data-port="input"
           style={{
             position: 'absolute',
-            left: -5,
-            top: NODE_HEIGHT / 2 - 5,
-            width: 10,
-            height: 10,
+            left: -12,
+            top: NODE_HEIGHT / 2 - 12,
+            width: 24,
+            height: 24,
             borderRadius: '50%',
-            background: '#0d1117',
-            border: '1.5px solid #484f58',
+            background: 'transparent',
             cursor: 'crosshair',
             pointerEvents: 'auto',
-            zIndex: 10,
+            zIndex: 20,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
-          onMouseUp={(e) => onEndConn(e, node)}
-        />
+          onMouseUp={(e) => {
+            e.stopPropagation();
+            onEndConn(e, node);
+          }}
+        >
+          <div
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              background: '#0d1117',
+              border: '1.5px solid #484f58',
+            }}
+          />
+        </div>
       )}
       {/* Output ports */}
       {Array.from({ length: TYPES[node.type].outs }).map((_, i) => {
@@ -182,22 +202,37 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
         return (
           <div
             key={i}
-            data-port="1"
+            data-port="output"
             style={{
               position: 'absolute',
-              right: -5,
-              top: py - 5,
-              width: 10,
-              height: 10,
+              right: -12,
+              top: py - 12,
+              width: 24,
+              height: 24,
               borderRadius: '50%',
-              background: t.color,
-              border: '1.5px solid #0d1117',
+              background: 'transparent',
               cursor: 'crosshair',
               pointerEvents: 'auto',
-              zIndex: 10,
+              zIndex: 20,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
-            onMouseDown={(e) => onStartConn(e, node, i)}
-          />
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              onStartConn(e, node, i);
+            }}
+          >
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background: t.color,
+                border: '1.5px solid #0d1117',
+              }}
+            />
+          </div>
         );
       })}
     </div>

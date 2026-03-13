@@ -38,6 +38,7 @@ interface WorkflowCanvasProps {
   endConn: (e: React.MouseEvent, n: WorkflowNode) => void;
   delNode: (id: string) => void;
   toggleBP: (id: string) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
 }
 
 export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
@@ -67,6 +68,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   endConn,
   delNode,
   toggleBP,
+  onNodeDoubleClick,
 }) => {
   const gX = ((off.x % 24) + 24) % 24;
   const gY = ((off.y % 24) + 24) % 24;
@@ -192,6 +194,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               onDelete={() => delNode(n.id)}
               onStartConn={startConn}
               onEndConn={endConn}
+              onDoubleClick={() => onNodeDoubleClick?.(n.id)}
             />
           ))}
         </div>
