@@ -8,3 +8,5 @@ export { StickyNote } from './StickyNote';
 export { Minimap } from './Minimap';
 export { DataMappingPanel } from './DataMappingPanel';
 export { WorkflowListPanel } from './WorkflowListPanel';
+export { CodeEditor } from './CodeEditor';
+export { SecretsPanel } from './SecretsPanel';
