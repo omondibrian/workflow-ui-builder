@@ -27,40 +27,106 @@ export interface HttpHeader {
 export interface NodeConfig {
   // Trigger
   triggerType?: string;
+  triggerEnabled?: boolean;
+  triggerDescription?: string;
+  inputSchema?: string;
+  maxConcurrent?: number;
   // Task (legacy)
   actionType?: string;
   endpoint?: string;
+  taskDescription?: string;
+  taskTimeout?: number;
+  taskRetryStrategy?: string;
+  taskMaxRetries?: number;
+  taskOutputVariable?: string;
   // Decision
   condition?: string;
+  decisionMode?: string;
+  switchVariable?: string;
+  defaultBranch?: string;
+  caseSensitive?: boolean;
   // Loop
   loopCount?: number;
   exitCondition?: string;
+  loopIterator?: string;
+  loopBatchSize?: number;
+  loopItemVariable?: string;
+  loopIndexVariable?: string;
+  loopContinueOnError?: boolean;
   // Delay
   delayMs?: number;
+  delayValue?: number;
+  delayUnit?: string;
+  delayDescription?: string;
+  delayInterruptible?: boolean;
   // HTTP Request
   httpMethod?: HttpMethod;
   httpUrl?: string;
   httpHeaders?: HttpHeader[];
   httpBody?: string;
   httpTimeout?: number;
+  httpAuthType?: string;
+  httpBearerToken?: string;
+  httpUsername?: string;
+  httpPassword?: string;
+  httpApiKeyHeader?: string;
+  httpApiKeyValue?: string;
+  httpContentType?: string;
+  httpRetryStrategy?: string;
+  httpMaxRetries?: number;
+  httpRetryDelay?: number;
+  httpFollowRedirects?: boolean;
+  httpValidateSSL?: boolean;
   // Email
   emailTo?: string;
   emailSubject?: string;
   emailBody?: string;
   emailFrom?: string;
+  emailCc?: string;
+  emailBcc?: string;
+  emailIsHtml?: boolean;
+  emailReplyTo?: string;
+  emailPriority?: string;
+  emailAttachments?: string;
   // Script
   scriptLanguage?: 'javascript' | 'python';
   scriptCode?: string;
+  scriptTimeout?: number;
+  scriptErrorHandling?: string;
+  scriptAsync?: boolean;
   // Transform
   transformExpression?: string;
   transformMapping?: Record<string, string>;
+  transformErrorHandling?: string;
+  transformValidateOutput?: boolean;
+  transformOutputSchema?: string;
   // Webhook
   webhookPath?: string;
   webhookMethod?: HttpMethod;
   webhookSecret?: string;
+  webhookAuthType?: string;
+  webhookResponseStatus?: number;
+  webhookResponseBody?: string;
+  webhookAsync?: boolean;
   // Schedule
   cronExpression?: string;
   timezone?: string;
+  scheduleEnabled?: boolean;
+  scheduleStartDate?: string;
+  scheduleEndDate?: string;
+  scheduleDescription?: string;
+  // Parallel
+  parallelMaxConcurrency?: number;
+  parallelTimeout?: number;
+  parallelFailFast?: boolean;
+  parallelWaitAll?: boolean;
+  parallelMergeStrategy?: string;
+  // End
+  endStatus?: string;
+  endStatusVariable?: string;
+  endOutputMapping?: string;
+  endMessage?: string;
+  endNotify?: boolean;
   // Input/Output mapping
   inputMapping?: Record<string, string>;
   outputVariable?: string;
@@ -158,11 +224,22 @@ export interface StackFrame {
   id: string;
   label: string;
   type: NodeType;
-  entered: string;
+  entered?: string;
+  start?: number;
 }
 
 export interface ExecutionContext {
   [key: string]: unknown;
+}
+
+// Secret stored in the workflow (value is masked in UI, resolved at runtime)
+export interface WorkflowSecret {
+  id: string;
+  name: string;        // e.g., "API_KEY", "DATABASE_URL"
+  value: string;       // The actual secret value (stored encrypted in production)
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkflowData {
@@ -171,6 +248,7 @@ export interface WorkflowData {
   nodes: WorkflowNode[];
   connections: Connection[];
   stickyNotes?: StickyNote[];
+  secrets?: WorkflowSecret[];
   lastContext: ExecutionContext;
 }
 
