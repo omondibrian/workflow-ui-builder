@@ -1,4 +1,4 @@
-import { useState, useCallback, RefObject } from 'react';
+import { useState, useCallback, useEffect, RefObject } from 'react';
 import { WorkflowNode, Connection, DragState, PanState, ConnState, Point, NodeType } from '../types';
 import { TYPES, NODE_WIDTH, NODE_HEIGHT } from '../constants';
 import { generateId, getOutputPort } from '../utils';
@@ -80,6 +80,39 @@ export const useCanvasInteractions = ({
     setPan(null);
     setConn(null);
   }, []);
+
+  // Global listeners for mouseup (outside canvas) and Escape key to cancel drag
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setDrag(null);
+      setPan(null);
+      setConn(null);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Cancel drag and restore original position
+        if (drag) {
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === drag.id ? { ...n, x: drag.ox, y: drag.oy } : n
+            )
+          );
+        }
+        setDrag(null);
+        setPan(null);
+        setConn(null);
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [drag, setNodes]);
 
   const onDown = useCallback(
     (e: React.MouseEvent) => {

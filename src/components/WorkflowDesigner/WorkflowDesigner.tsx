@@ -314,7 +314,7 @@ const WorkflowDesigner: React.FC = () => {
 
         {/* Canvas + Debug Panel column */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-          {/* Canvas */}
+          {/* Canvas with zoom */}
           <div
             style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
             onWheel={(e) => {
@@ -324,10 +324,13 @@ const WorkflowDesigner: React.FC = () => {
           >
             <div
               style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: '0 0',
+                position: 'absolute',
+                top: 0,
+                left: 0,
                 width: `${100 / zoom}%`,
                 height: `${100 / zoom}%`,
+                transform: `scale(${zoom})`,
+                transformOrigin: '0 0',
               }}
             >
               <WorkflowCanvas
