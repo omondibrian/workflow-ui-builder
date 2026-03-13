@@ -1,4 +1,19 @@
-# Getting Started with Create React App
+# Workflow UI Builder
+
+A visual workflow designer built with React and TypeScript. Create, edit, and simulate workflow processes with an intuitive drag-and-drop interface.
+
+![Workflow Designer Screenshot](assets/workflow-screenshot.png)
+
+## Features
+
+- **Visual Node Editor**: Drag and drop workflow nodes (Trigger, Task, Decision, Parallel, End)
+- **Connection Management**: Create connections between nodes with visual bezier curves
+- **Workflow Simulation**: Run workflows with real-time execution visualization
+- **Debug Mode**: Set breakpoints, step through execution, and inspect context
+- **Execution Log**: Track workflow progress with timestamped logs
+- **Export**: Export workflow definitions as JSON
+
+## Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
