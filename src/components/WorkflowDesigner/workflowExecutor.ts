@@ -3,7 +3,8 @@ import {
   Connection, 
   ExecutionContext, 
   NodeStatus, 
-  LogEntry 
+  LogEntry,
+  WorkflowSecret 
 } from './types';
 import { uid } from './utils';
 
@@ -24,37 +25,80 @@ interface NodeExecutor {
   (node: WorkflowNode, ctx: ExecutionContext): Promise<{ result: unknown; nextPort: number }>;
 }
 
-// Simulated HTTP request (for demo purposes)
-const simulateHttpRequest = async (
+// Real HTTP request using fetch API
+const executeHttpRequest = async (
   method: string,
   url: string,
   headers?: Record<string, string>,
   body?: string,
-  timeout?: number
+  timeout: number = 30000
 ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> => {
-  // Simulate network delay
-  await new Promise((r) => setTimeout(r, Math.random() * 500 + 200));
-  
-  // Simulate response based on URL patterns
-  if (url.includes('error') || url.includes('fail')) {
-    throw new Error('HTTP request failed: 500 Internal Server Error');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const requestInit: RequestInit = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+      signal: controller.signal,
+    };
+
+    // Only add body for methods that support it
+    if (body && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+      requestInit.body = body;
+    }
+
+    const response = await fetch(url, requestInit);
+    clearTimeout(timeoutId);
+
+    // Parse response body
+    let responseBody: unknown;
+    const contentType = response.headers.get('content-type') || '';
+    
+    if (contentType.includes('application/json')) {
+      responseBody = await response.json();
+    } else {
+      responseBody = await response.text();
+    }
+
+    // Convert headers to plain object
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return {
+      status: response.status,
+      body: responseBody,
+      headers: responseHeaders,
+    };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if ((error as Error).name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeout}ms`);
+    }
+    throw error;
   }
-  
-  return {
-    status: 200,
-    body: { success: true, method, url, timestamp: new Date().toISOString() },
-    headers: { 'content-type': 'application/json' },
-  };
 };
 
-// Simulated email send
+// Simulated email send (in real app, would call email API)
 const simulateEmailSend = async (
   to: string,
   subject: string,
   body: string,
   from?: string
-): Promise<{ messageId: string; sent: boolean }> => {
-  await new Promise((r) => setTimeout(r, Math.random() * 300 + 100));
+): Promise<{ messageId: string; sent: boolean; details: object }> => {
+  // In a real implementation, this would call an email service API
+  // For demo, we log and simulate success
+  console.log('📧 Email Send Request:', { to, from, subject, body: body.substring(0, 100) + '...' });
+  await new Promise((r) => setTimeout(r, 200));
   
   if (!to || !to.includes('@')) {
     throw new Error('Invalid email address');
@@ -63,6 +107,7 @@ const simulateEmailSend = async (
   return {
     messageId: `msg_${uid()}`,
     sent: true,
+    details: { to, from, subject, sentAt: new Date().toISOString() }
   };
 };
 
@@ -83,20 +128,36 @@ const executeScript = (code: string, ctx: ExecutionContext): unknown => {
 // Evaluate a condition against context
 const evaluateCondition = (condition: string, ctx: ExecutionContext): boolean => {
   try {
-    const fn = new Function('ctx', `
-      'use strict';
-      with (ctx) { return Boolean(${condition}); }
-    `);
-    return fn(ctx);
+    // Create a function that destructures ctx properties for easy access
+    const keys = Object.keys(ctx);
+    const values = Object.values(ctx);
+    // Build a function that takes ctx values as arguments
+    const fn = new Function(...keys, `return Boolean(${condition});`);
+    return fn(...values);
   } catch (e) {
     console.error('Condition evaluation failed:', e);
     return false;
   }
 };
 
-// Template string interpolation
-const interpolateTemplate = (template: string, ctx: ExecutionContext): string => {
-  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (match, path) => {
+// Template string interpolation with secrets support
+const interpolateTemplate = (
+  template: string, 
+  ctx: ExecutionContext, 
+  secrets: WorkflowSecret[] = []
+): string => {
+  // First resolve secrets ({{secrets.SECRET_NAME}})
+  let result = template.replace(/\{\{secrets\.(\w+)\}\}/g, (match, secretName) => {
+    const secret = secrets.find(s => s.name === secretName);
+    if (secret) {
+      return secret.value;
+    }
+    console.warn(`Secret not found: ${secretName}`);
+    return match; // Keep original if not found
+  });
+  
+  // Then resolve context variables ({{variable}} or {{nested.path}})
+  result = result.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (match, path) => {
     const value = path.split('.').reduce((obj: unknown, key: string) => {
       if (obj && typeof obj === 'object') {
         return (obj as Record<string, unknown>)[key];
@@ -105,6 +166,8 @@ const interpolateTemplate = (template: string, ctx: ExecutionContext): string =>
     }, ctx as unknown);
     return value !== undefined ? String(value) : match;
   });
+  
+  return result;
 };
 
 // Node executors for each type
@@ -137,28 +200,73 @@ const nodeExecutors: Partial<Record<string, NodeExecutor>> = {
 
   http: async (node, ctx) => {
     try {
-      const url = interpolateTemplate(node.config.httpUrl || '', ctx);
-      const body = node.config.httpBody ? interpolateTemplate(node.config.httpBody, ctx) : undefined;
+      const secrets = (ctx._secrets as WorkflowSecret[]) || [];
+      const url = interpolateTemplate(node.config.httpUrl || '', ctx, secrets);
+      const body = node.config.httpBody ? interpolateTemplate(node.config.httpBody, ctx, secrets) : undefined;
       
-      const response = await simulateHttpRequest(
+      // Convert headers array to object
+      const headers: Record<string, string> = {};
+      if (node.config.httpHeaders) {
+        for (const h of node.config.httpHeaders) {
+          headers[h.key] = interpolateTemplate(h.value, ctx, secrets);
+        }
+      }
+      
+      // Handle authentication with secrets support
+      if (node.config.httpAuthType === 'bearer') {
+        const token = interpolateTemplate(node.config.httpBearerToken || '', ctx, secrets);
+        headers['Authorization'] = `Bearer ${token}`;
+      } else if (node.config.httpAuthType === 'basic') {
+        const username = interpolateTemplate(node.config.httpUsername || '', ctx, secrets);
+        const password = interpolateTemplate(node.config.httpPassword || '', ctx, secrets);
+        headers['Authorization'] = `Basic ${btoa(`${username}:${password}`)}`;
+      } else if (node.config.httpAuthType === 'api-key') {
+        const headerName = node.config.httpApiKeyHeader || 'X-API-Key';
+        const keyValue = interpolateTemplate(node.config.httpApiKeyValue || '', ctx, secrets);
+        headers[headerName] = keyValue;
+      }
+      
+      console.log(`🌐 HTTP ${node.config.httpMethod || 'GET'}: ${url}`);
+      
+      const response = await executeHttpRequest(
         node.config.httpMethod || 'GET',
         url,
-        undefined,
+        headers,
         body,
-        node.config.httpTimeout
+        node.config.httpTimeout || 30000
       );
       
-      return { result: { response }, nextPort: 0 };
+      console.log(`✅ HTTP Response: ${response.status}`, response.body);
+      
+      // Store response in ctx.response for easy access (common pattern)
+      (ctx as Record<string, unknown>).response = response;
+      
+      // Store response data in context for easy access by subsequent nodes
+      // Use outputVariable if specified, otherwise use 'httpResponse'
+      const outputKey = node.config.outputVariable || 'httpResponse';
+      (ctx as Record<string, unknown>)[outputKey] = response.body;
+      (ctx as Record<string, unknown>)[`${outputKey}_status`] = response.status;
+      (ctx as Record<string, unknown>)[`${outputKey}_headers`] = response.headers;
+      
+      // Also store with node label (sanitized) for multi-HTTP workflows
+      const sanitizedLabel = node.label.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+      (ctx as Record<string, unknown>)[sanitizedLabel] = response.body;
+      
+      return { result: { response, data: response.body }, nextPort: 0 };
     } catch (e) {
+      console.error(`❌ HTTP Error:`, (e as Error).message);
+      // Store error in context
+      (ctx as Record<string, unknown>).response = { error: (e as Error).message, status: 0, body: null, headers: {} };
       return { result: { error: (e as Error).message }, nextPort: 1 };
     }
   },
 
   email: async (node, ctx) => {
     try {
-      const to = interpolateTemplate(node.config.emailTo || '', ctx);
-      const subject = interpolateTemplate(node.config.emailSubject || '', ctx);
-      const body = interpolateTemplate(node.config.emailBody || '', ctx);
+      const secrets = (ctx._secrets as WorkflowSecret[]) || [];
+      const to = interpolateTemplate(node.config.emailTo || '', ctx, secrets);
+      const subject = interpolateTemplate(node.config.emailSubject || '', ctx, secrets);
+      const body = interpolateTemplate(node.config.emailBody || '', ctx, secrets);
       
       const result = await simulateEmailSend(to, subject, body, node.config.emailFrom);
       return { result, nextPort: 0 };
@@ -266,6 +374,7 @@ export class WorkflowExecutor {
   private nodes: Map<string, WorkflowNode>;
   private connections: Connection[];
   private options: ExecutionOptions;
+  private secrets: WorkflowSecret[];
   private nodeStatuses: Map<string, NodeStatus> = new Map();
   private isRunning: boolean = false;
   private isPaused: boolean = false;
@@ -273,11 +382,13 @@ export class WorkflowExecutor {
   constructor(
     nodes: WorkflowNode[],
     connections: Connection[],
-    options: ExecutionOptions
+    options: ExecutionOptions,
+    secrets: WorkflowSecret[] = []
   ) {
     this.nodes = new Map(nodes.map((n) => [n.id, n]));
     this.connections = connections;
     this.options = options;
+    this.secrets = secrets;
   }
 
   private log(level: LogEntry['level'], msg: string, nodeId: string | null = null): void {
@@ -306,7 +417,8 @@ export class WorkflowExecutor {
   async execute(initialContext: ExecutionContext = {}): Promise<ExecutionContext> {
     this.isRunning = true;
     this.isPaused = false;
-    const ctx = { ...initialContext };
+    // Inject secrets into context for use by interpolateTemplate
+    const ctx = { ...initialContext, _secrets: this.secrets };
 
     const startNodes = this.findStartNodes();
     if (startNodes.length === 0) {
@@ -326,7 +438,9 @@ export class WorkflowExecutor {
     }
 
     this.isRunning = false;
-    return ctx;
+    // Remove secrets from returned context
+    const { _secrets, ...cleanCtx } = ctx as Record<string, unknown>;
+    return cleanCtx as ExecutionContext;
   }
 
   private async executeNode(nodeId: string, ctx: ExecutionContext): Promise<void> {
