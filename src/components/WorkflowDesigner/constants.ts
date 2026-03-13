@@ -5,18 +5,30 @@ export const NODE_WIDTH = 172;
 export const NODE_HEIGHT = 58;
 
 export const TYPES: Record<NodeType, NodeTypeConfig> = {
-  trigger:  { color: '#10b981', label: 'Trigger',  outs: 1 },
-  task:     { color: '#3b82f6', label: 'Task',     outs: 2, errorPort: true },
-  decision: { color: '#f59e0b', label: 'Decision', outs: 2 },
-  parallel: { color: '#a855f7', label: 'Parallel', outs: 1 },
-  loop:     { color: '#22d3ee', label: 'Loop',     outs: 2 },
-  delay:    { color: '#c084fc', label: 'Delay',    outs: 1 },
-  end:      { color: '#ef4444', label: 'End',      outs: 0 },
+  trigger:   { color: '#10b981', label: 'Trigger',   outs: 1 },
+  webhook:   { color: '#059669', label: 'Webhook',   outs: 1 },
+  schedule:  { color: '#14b8a6', label: 'Schedule',  outs: 1 },
+  task:      { color: '#3b82f6', label: 'Task',      outs: 2, errorPort: true },
+  http:      { color: '#6366f1', label: 'HTTP',      outs: 2, errorPort: true },
+  email:     { color: '#ec4899', label: 'Email',     outs: 2, errorPort: true },
+  script:    { color: '#8b5cf6', label: 'Script',    outs: 2, errorPort: true },
+  transform: { color: '#06b6d4', label: 'Transform', outs: 1 },
+  decision:  { color: '#f59e0b', label: 'Decision',  outs: 2 },
+  parallel:  { color: '#a855f7', label: 'Parallel',  outs: 1 },
+  loop:      { color: '#22d3ee', label: 'Loop',      outs: 2 },
+  delay:     { color: '#c084fc', label: 'Delay',     outs: 1 },
+  end:       { color: '#ef4444', label: 'End',       outs: 0 },
 };
 
 export const ICONS: Record<NodeType, string> = {
   trigger: '▶',
+  webhook: '⚡',
+  schedule: '🕐',
   task: '◉',
+  http: '🌐',
+  email: '✉',
+  script: '{ }',
+  transform: '⇄',
   decision: '◆',
   parallel: '⊞',
   loop: '↺',
@@ -26,7 +38,13 @@ export const ICONS: Record<NodeType, string> = {
 
 export const DESCRIPTIONS: Record<NodeType, string> = {
   trigger: 'start event',
+  webhook: 'HTTP trigger',
+  schedule: 'cron job',
   task: 'action step',
+  http: 'API request',
+  email: 'send email',
+  script: 'run code',
+  transform: 'map data',
   decision: 'if/else',
   parallel: 'concurrent',
   loop: 'iterate',
@@ -118,3 +136,16 @@ export const SELECT_STYLE: React.CSSProperties = {
 
 export const TRIGGER_TYPES = ['API Call', 'Webhook', 'Timer', 'User Action', 'DB Event'];
 export const ACTION_TYPES = ['Send Email', 'Call API', 'Create Record', 'Generate Report', 'Send Notification', 'Log Audit'];
+
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] as const;
+
+export const SCRIPT_LANGUAGES = ['javascript', 'python'] as const;
+
+export const CRON_PRESETS = [
+  { label: 'Every minute', value: '* * * * *' },
+  { label: 'Every 5 minutes', value: '*/5 * * * *' },
+  { label: 'Every hour', value: '0 * * * *' },
+  { label: 'Every day at midnight', value: '0 0 * * *' },
+  { label: 'Every Monday at 9am', value: '0 9 * * 1' },
+  { label: 'First of month at midnight', value: '0 0 1 * *' },
+];

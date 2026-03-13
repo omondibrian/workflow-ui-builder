@@ -31,7 +31,13 @@ export const getBezierPath = (start: Point, end: Point): string => {
 export const getExecutionDelay = (type: NodeType): number => {
   const delays: Record<NodeType, number> = {
     trigger: 500,
+    webhook: 400,
+    schedule: 400,
     task: 800,
+    http: 1200,
+    email: 900,
+    script: 600,
+    transform: 300,
     decision: 550,
     parallel: 350,
     loop: 300,

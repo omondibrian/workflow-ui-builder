@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { WorkflowNode, Connection, Point, StickyNote as StickyNoteType, WatchItem, ExecutionRun, Breakpoint } from './types';
-import { DEMO_NODES, DEMO_CONNECTIONS } from './constants';
+import { WorkflowNode, Connection, Point, StickyNote as StickyNoteType, WatchItem, ExecutionRun, Breakpoint, DataMapping } from './types';
+import { DEMO_NODES, DEMO_CONNECTIONS, INITIAL_CONTEXT } from './constants';
 import {
   useWorkflowSimulation,
   useCanvasInteractions,
@@ -17,8 +17,17 @@ import {
   PropertiesPanel,
   StickyNote,
   Minimap,
+  DataMappingPanel,
+  WorkflowListPanel,
 } from './components';
 import { uid } from './utils';
+import {
+  SavedWorkflow,
+  saveWorkflow,
+  getLastOpenedWorkflow,
+  ensureDemoWorkflow,
+  setLastOpened,
+} from './workflowStorage';
 
 const WorkflowDesigner: React.FC = () => {
   // State
@@ -37,6 +46,12 @@ const WorkflowDesigner: React.FC = () => {
   const [executionHistory, setExecutionHistory] = useState<ExecutionRun[]>([]);
   const [conditionalBreakpoints, setConditionalBreakpoints] = useState<Map<string, Breakpoint>>(new Map());
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
+  
+  // Persistence and panels state
+  const [workflowId, setWorkflowId] = useState<string | undefined>();
+  const [showWorkflowList, setShowWorkflowList] = useState(false);
+  const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +69,34 @@ const WorkflowDesigner: React.FC = () => {
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
   }, []);
+
+  // Load workflow from localStorage on mount
+  useEffect(() => {
+    const savedWorkflow = getLastOpenedWorkflow();
+    if (savedWorkflow) {
+      setNodes(savedWorkflow.data.nodes);
+      setConns(savedWorkflow.data.connections);
+      setStickyNotes(savedWorkflow.data.stickyNotes || []);
+      setWfName(savedWorkflow.name);
+      setWorkflowId(savedWorkflow.id);
+    } else {
+      // Create demo workflow if none exists
+      const demo = ensureDemoWorkflow();
+      setWorkflowId(demo.id);
+    }
+  }, []);
+
+  // Auto-save workflow on changes (debounced)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (nodes.length > 0) {
+        const saved = saveWorkflow(wfName, nodes, conns, stickyNotes, INITIAL_CONTEXT, workflowId);
+        setWorkflowId(saved.id);
+        setLastSaved(new Date().toLocaleTimeString());
+      }
+    }, 2000);
+    return () => clearTimeout(timeoutId);
+  }, [nodes, conns, stickyNotes, wfName, workflowId]);
 
   // Undo/Redo hook
   const { saveState, undo, redo, canUndo, canRedo } = useUndoRedo({ nodes, conns, setNodes, setConns });
@@ -220,6 +263,45 @@ const WorkflowDesigner: React.FC = () => {
       console.error('Failed to import workflow:', e);
     }
   }, [saveState]);
+
+  // Load a saved workflow from the list
+  const loadWorkflow = useCallback((workflow: SavedWorkflow) => {
+    setNodes(workflow.data.nodes);
+    setConns(workflow.data.connections);
+    setStickyNotes(workflow.data.stickyNotes || []);
+    setWfName(workflow.name);
+    setWorkflowId(workflow.id);
+    setLastOpened(workflow.id);
+    setShowWorkflowList(false);
+    saveState();
+  }, [saveState]);
+
+  // Create a new workflow
+  const createNewWorkflow = useCallback(() => {
+    setNodes([]);
+    setConns([]);
+    setStickyNotes([]);
+    setWfName('New Workflow');
+    setWorkflowId(undefined);
+    setShowWorkflowList(false);
+    saveState();
+  }, [saveState]);
+
+  // Update connection mappings
+  const updateConnectionMappings = useCallback((connectionId: string, mappings: DataMapping[]) => {
+    setConns((prev) =>
+      prev.map((c) => (c.id === connectionId ? { ...c, mappings } : c))
+    );
+    saveState();
+  }, [saveState]);
+
+  // Open data mapping panel for a connection
+  const openDataMapping = useCallback((connectionId: string) => {
+    const connection = conns.find((c) => c.id === connectionId);
+    if (connection) {
+      setEditingConnection(connection);
+    }
+  }, [conns]);
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -445,6 +527,71 @@ const WorkflowDesigner: React.FC = () => {
           />
         )}
       </div>
+
+      {/* Save indicator */}
+      {lastSaved && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 12,
+            right: 12,
+            background: '#161b22',
+            border: '1px solid #30363d',
+            borderRadius: 4,
+            padding: '4px 8px',
+            fontSize: 10,
+            color: '#484f58',
+            zIndex: 100,
+          }}
+        >
+          💾 Saved at {lastSaved}
+        </div>
+      )}
+
+      {/* Workflow list button */}
+      <button
+        onClick={() => setShowWorkflowList(true)}
+        style={{
+          position: 'fixed',
+          bottom: 12,
+          left: 12,
+          background: '#161b22',
+          border: '1px solid #30363d',
+          borderRadius: 4,
+          padding: '6px 12px',
+          fontSize: 11,
+          color: '#8b949e',
+          cursor: 'pointer',
+          zIndex: 100,
+          fontFamily: 'monospace',
+        }}
+      >
+        📁 Workflows
+      </button>
+
+      {/* Workflow List Panel */}
+      {showWorkflowList && (
+        <WorkflowListPanel
+          currentWorkflowId={workflowId}
+          onSelect={loadWorkflow}
+          onNew={createNewWorkflow}
+          onClose={() => setShowWorkflowList(false)}
+        />
+      )}
+
+      {/* Data Mapping Panel */}
+      {editingConnection && (
+        <DataMappingPanel
+          connection={editingConnection}
+          sourceNode={nodes.find((n) => n.id === editingConnection.from)!}
+          targetNode={nodes.find((n) => n.id === editingConnection.to)!}
+          onUpdate={(mappings) => {
+            updateConnectionMappings(editingConnection.id, mappings);
+            setEditingConnection(null);
+          }}
+          onClose={() => setEditingConnection(null)}
+        />
+      )}
     </div>
   );
 };

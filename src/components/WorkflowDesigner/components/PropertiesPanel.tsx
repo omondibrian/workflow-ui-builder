@@ -1,5 +1,5 @@
 import React from 'react';
-import { WorkflowNode, Connection, NodeStatus } from '../types';
+import { WorkflowNode, Connection, NodeStatus, HttpHeader } from '../types';
 import {
   TYPES,
   ICONS,
@@ -8,7 +8,16 @@ import {
   STATUS_COLORS,
   TRIGGER_TYPES,
   ACTION_TYPES,
+  HTTP_METHODS,
+  SCRIPT_LANGUAGES,
+  CRON_PRESETS,
 } from '../constants';
+
+const TEXTAREA_STYLE: React.CSSProperties = {
+  ...INPUT_STYLE,
+  resize: 'vertical',
+  minHeight: 60,
+};
 
 interface PropertiesPanelProps {
   selectedNode: WorkflowNode;
@@ -193,6 +202,301 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             style={INPUT_STYLE}
           />
         </div>
+      )}
+
+      {/* HTTP Request properties */}
+      {selectedNode.type === 'http' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>METHOD</div>
+            <select
+              value={selectedNode.config?.httpMethod || 'GET'}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('httpMethod', e.target.value)}
+              style={SELECT_STYLE}
+            >
+              {HTTP_METHODS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>URL</div>
+            <input
+              placeholder="https://api.example.com/endpoint"
+              value={selectedNode.config?.httpUrl || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('httpUrl', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>HEADERS (JSON)</div>
+            <textarea
+              placeholder='{"Authorization": "Bearer token"}'
+              value={selectedNode.config?.httpHeaders ? JSON.stringify(selectedNode.config.httpHeaders) : ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                try {
+                  updateConfig('httpHeaders', JSON.parse(e.target.value || '[]'));
+                } catch {
+                  // Keep as is if invalid JSON
+                }
+              }}
+              style={TEXTAREA_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>BODY</div>
+            <textarea
+              placeholder='{"key": "value"}'
+              value={selectedNode.config?.httpBody || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('httpBody', e.target.value)}
+              style={TEXTAREA_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>TIMEOUT (ms)</div>
+            <input
+              type="number"
+              placeholder="30000"
+              value={selectedNode.config?.httpTimeout || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('httpTimeout', parseInt(e.target.value) || 30000)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ fontSize: 8, color: '#484f58', marginBottom: 10 }}>
+            ⚠ Port 0: Success | Port 1: Error
+          </div>
+        </>
+      )}
+
+      {/* Email properties */}
+      {selectedNode.type === 'email' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>TO</div>
+            <input
+              placeholder="recipient@example.com"
+              value={selectedNode.config?.emailTo || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('emailTo', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>SUBJECT</div>
+            <input
+              placeholder="Email subject"
+              value={selectedNode.config?.emailSubject || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('emailSubject', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>BODY</div>
+            <textarea
+              placeholder="Email content..."
+              value={selectedNode.config?.emailBody || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('emailBody', e.target.value)}
+              style={{ ...TEXTAREA_STYLE, minHeight: 80 }}
+            />
+            <div style={{ fontSize: 8, color: '#484f58', marginTop: 3 }}>
+              Use {`{{variable}}`} for dynamic values
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>FROM (optional)</div>
+            <input
+              placeholder="sender@example.com"
+              value={selectedNode.config?.emailFrom || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('emailFrom', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ fontSize: 8, color: '#484f58', marginBottom: 10 }}>
+            ⚠ Port 0: Sent | Port 1: Failed
+          </div>
+        </>
+      )}
+
+      {/* Script properties */}
+      {selectedNode.type === 'script' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>LANGUAGE</div>
+            <select
+              value={selectedNode.config?.scriptLanguage || 'javascript'}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('scriptLanguage', e.target.value)}
+              style={SELECT_STYLE}
+            >
+              {SCRIPT_LANGUAGES.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>CODE</div>
+            <textarea
+              placeholder={selectedNode.config?.scriptLanguage === 'python' 
+                ? '# Access context via ctx\nresult = ctx["amount"] * 1.1'
+                : '// Access context via ctx\nreturn ctx.amount * 1.1;'}
+              value={selectedNode.config?.scriptCode || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('scriptCode', e.target.value)}
+              style={{ ...TEXTAREA_STYLE, minHeight: 100, fontFamily: 'monospace', fontSize: 10 }}
+            />
+            <div style={{ fontSize: 8, color: '#484f58', marginTop: 3 }}>
+              Use ctx to access execution context
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>OUTPUT VARIABLE</div>
+            <input
+              placeholder="result"
+              value={selectedNode.config?.outputVariable || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('outputVariable', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ fontSize: 8, color: '#484f58', marginBottom: 10 }}>
+            ⚠ Port 0: Success | Port 1: Error
+          </div>
+        </>
+      )}
+
+      {/* Transform properties */}
+      {selectedNode.type === 'transform' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>EXPRESSION</div>
+            <textarea
+              placeholder="{ newField: ctx.oldField * 2 }"
+              value={selectedNode.config?.transformExpression || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('transformExpression', e.target.value)}
+              style={{ ...TEXTAREA_STYLE, minHeight: 80 }}
+            />
+            <div style={{ fontSize: 8, color: '#484f58', marginTop: 3 }}>
+              JS expression. Return object to merge into context.
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>OUTPUT VARIABLE</div>
+            <input
+              placeholder="transformedData"
+              value={selectedNode.config?.outputVariable || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('outputVariable', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Webhook properties */}
+      {selectedNode.type === 'webhook' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>PATH</div>
+            <input
+              placeholder="/api/webhook/order-created"
+              value={selectedNode.config?.webhookPath || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('webhookPath', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>METHOD</div>
+            <select
+              value={selectedNode.config?.webhookMethod || 'POST'}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('webhookMethod', e.target.value)}
+              style={SELECT_STYLE}
+            >
+              {HTTP_METHODS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>SECRET (optional)</div>
+            <input
+              type="password"
+              placeholder="Webhook secret for validation"
+              value={selectedNode.config?.webhookSecret || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('webhookSecret', e.target.value)}
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div style={{ fontSize: 8, color: '#484f58', marginBottom: 10 }}>
+            Incoming payload available in ctx.webhook
+          </div>
+        </>
+      )}
+
+      {/* Schedule properties */}
+      {selectedNode.type === 'schedule' && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>PRESET</div>
+            <select
+              value=""
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                if (e.target.value) {
+                  updateConfig('cronExpression', e.target.value);
+                }
+              }}
+              style={SELECT_STYLE}
+            >
+              <option value="">Select preset...</option>
+              {CRON_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>CRON EXPRESSION</div>
+            <input
+              placeholder="*/5 * * * *"
+              value={selectedNode.config?.cronExpression || ''}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('cronExpression', e.target.value)}
+              style={INPUT_STYLE}
+            />
+            <div style={{ fontSize: 8, color: '#484f58', marginTop: 3 }}>
+              Format: minute hour day month weekday
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4, letterSpacing: 1 }}>TIMEZONE</div>
+            <select
+              value={selectedNode.config?.timezone || 'UTC'}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => updateConfig('timezone', e.target.value)}
+              style={SELECT_STYLE}
+            >
+              <option value="UTC">UTC</option>
+              <option value="America/New_York">America/New_York</option>
+              <option value="America/Los_Angeles">America/Los_Angeles</option>
+              <option value="Europe/London">Europe/London</option>
+              <option value="Europe/Paris">Europe/Paris</option>
+              <option value="Asia/Tokyo">Asia/Tokyo</option>
+              <option value="Asia/Shanghai">Asia/Shanghai</option>
+              <option value="Australia/Sydney">Australia/Sydney</option>
+            </select>
+          </div>
+        </>
       )}
 
       {/* Runtime status */}

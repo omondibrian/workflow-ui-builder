@@ -1,17 +1,69 @@
-export type NodeType = 'trigger' | 'task' | 'decision' | 'parallel' | 'end' | 'loop' | 'delay';
+export type NodeType = 
+  | 'trigger' 
+  | 'task' 
+  | 'decision' 
+  | 'parallel' 
+  | 'end' 
+  | 'loop' 
+  | 'delay'
+  | 'http'      // HTTP Request
+  | 'email'     // Send Email
+  | 'script'    // Execute Code
+  | 'transform' // Data Transform
+  | 'webhook'   // Webhook Trigger
+  | 'schedule'; // Scheduled Trigger
 
 export type SimStatus = 'idle' | 'pending' | 'running' | 'done' | 'paused' | 'error';
 
 export type SimState = 'idle' | 'running' | 'paused' | 'done' | 'error';
 
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+
+export interface HttpHeader {
+  key: string;
+  value: string;
+}
+
 export interface NodeConfig {
+  // Trigger
   triggerType?: string;
+  // Task (legacy)
   actionType?: string;
   endpoint?: string;
+  // Decision
   condition?: string;
+  // Loop
   loopCount?: number;
   exitCondition?: string;
+  // Delay
   delayMs?: number;
+  // HTTP Request
+  httpMethod?: HttpMethod;
+  httpUrl?: string;
+  httpHeaders?: HttpHeader[];
+  httpBody?: string;
+  httpTimeout?: number;
+  // Email
+  emailTo?: string;
+  emailSubject?: string;
+  emailBody?: string;
+  emailFrom?: string;
+  // Script
+  scriptLanguage?: 'javascript' | 'python';
+  scriptCode?: string;
+  // Transform
+  transformExpression?: string;
+  transformMapping?: Record<string, string>;
+  // Webhook
+  webhookPath?: string;
+  webhookMethod?: HttpMethod;
+  webhookSecret?: string;
+  // Schedule
+  cronExpression?: string;
+  timezone?: string;
+  // Input/Output mapping
+  inputMapping?: Record<string, string>;
+  outputVariable?: string;
 }
 
 export interface WorkflowNode {
@@ -23,6 +75,12 @@ export interface WorkflowNode {
   config: NodeConfig;
 }
 
+export interface DataMapping {
+  sourceField: string;
+  targetField: string;
+  transform?: string; // Optional JS expression
+}
+
 export interface Connection {
   id: string;
   from: string;
@@ -30,6 +88,7 @@ export interface Connection {
   port: number;
   label: string;
   isError?: boolean;
+  mappings?: DataMapping[]; // Data mappings between nodes
 }
 
 export interface StickyNote {
@@ -103,7 +162,7 @@ export interface StackFrame {
 }
 
 export interface ExecutionContext {
-  [key: string]: string | number | boolean | undefined;
+  [key: string]: unknown;
 }
 
 export interface WorkflowData {
