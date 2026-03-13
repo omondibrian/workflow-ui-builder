@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, RefObject } from 'react';
+import { useState, useCallback, useEffect, useRef, RefObject } from 'react';
 import { WorkflowNode, Connection, DragState, PanState, ConnState, Point, NodeType } from '../types';
 import { TYPES, NODE_WIDTH, NODE_HEIGHT } from '../constants';
 import { generateId, getOutputPort } from '../utils';
@@ -51,6 +51,28 @@ export const useCanvasInteractions = ({
   const [mxy, setMxy] = useState<Point>({ x: 0, y: 0 });
   const [hover, setHover] = useState<string | null>(null);
 
+  // Refs to track state for global event handlers
+  const dragRef = useRef<DragState | null>(null);
+  const panRef = useRef<PanState | null>(null);
+  const connRef = useRef<ConnState | null>(null);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    dragRef.current = drag;
+  }, [drag]);
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+  useEffect(() => {
+    connRef.current = conn;
+  }, [conn]);
+
+  const clearAllInteractions = useCallback(() => {
+    setDrag(null);
+    setPan(null);
+    setConn(null);
+  }, []);
+
   const onMove = useCallback(
     (e: React.MouseEvent) => {
       if (drag) {
@@ -76,43 +98,63 @@ export const useCanvasInteractions = ({
   );
 
   const onUp = useCallback(() => {
-    setDrag(null);
-    setPan(null);
-    setConn(null);
-  }, []);
+    clearAllInteractions();
+  }, [clearAllInteractions]);
 
   // Global listeners for mouseup (outside canvas) and Escape key to cancel drag
   useEffect(() => {
     const handleGlobalMouseUp = () => {
-      setDrag(null);
-      setPan(null);
-      setConn(null);
+      // Always clear interactions on any mouse up
+      clearAllInteractions();
+    };
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      // Handle mouse move globally when dragging
+      const currentDrag = dragRef.current;
+      const currentPan = panRef.current;
+      
+      if (currentDrag) {
+        const dx = e.clientX - currentDrag.sx;
+        const dy = e.clientY - currentDrag.sy;
+        setNodes((ns) =>
+          ns.map((n) =>
+            n.id === currentDrag.id
+              ? { ...n, x: Math.max(0, currentDrag.ox + dx), y: Math.max(0, currentDrag.oy + dy) }
+              : n
+          )
+        );
+      }
+      if (currentPan) {
+        setOff({ x: currentPan.ox + e.clientX - currentPan.sx, y: currentPan.oy + e.clientY - currentPan.sy });
+      }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         // Cancel drag and restore original position
-        if (drag) {
+        const currentDrag = dragRef.current;
+        if (currentDrag) {
           setNodes((ns) =>
             ns.map((n) =>
-              n.id === drag.id ? { ...n, x: drag.ox, y: drag.oy } : n
+              n.id === currentDrag.id ? { ...n, x: currentDrag.ox, y: currentDrag.oy } : n
             )
           );
         }
-        setDrag(null);
-        setPan(null);
-        setConn(null);
+        clearAllInteractions();
       }
     };
 
-    window.addEventListener('mouseup', handleGlobalMouseUp);
+    // Use capture phase to ensure we get the event first
+    window.addEventListener('mouseup', handleGlobalMouseUp, true);
+    window.addEventListener('mousemove', handleGlobalMouseMove, true);
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('mouseup', handleGlobalMouseUp, true);
+      window.removeEventListener('mousemove', handleGlobalMouseMove, true);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [drag, setNodes]);
+  }, [clearAllInteractions, setNodes, setOff]);
 
   const onDown = useCallback(
     (e: React.MouseEvent) => {
