@@ -1,4 +1,4 @@
-import { WorkflowNode, Connection, StickyNote, ExecutionContext, WorkflowData } from './types';
+import { WorkflowNode, Connection, StickyNote, ExecutionContext, WorkflowData, WorkflowSecret } from './types';
 import { DEMO_NODES, DEMO_CONNECTIONS, INITIAL_CONTEXT } from './constants';
 
 const STORAGE_KEY = 'workflow-designer-data';
@@ -76,7 +76,8 @@ export const saveWorkflow = (
   connections: Connection[],
   stickyNotes: StickyNote[] = [],
   context: ExecutionContext = {},
-  existingId?: string
+  existingId?: string,
+  secrets: WorkflowSecret[] = []
 ): SavedWorkflow => {
   const data = getStorageData();
   const now = new Date().toISOString();
@@ -87,6 +88,7 @@ export const saveWorkflow = (
     nodes,
     connections,
     stickyNotes,
+    secrets,
     lastContext: context,
   };
 
