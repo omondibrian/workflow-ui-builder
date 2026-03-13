@@ -12,6 +12,8 @@ interface ToolbarProps {
   simState: SimState;
   simRunning: boolean;
   startSim: () => void;
+  startRealExec: () => void;
+  isRealExecuting: boolean;
   stopSim: () => void;
   pauseResume: () => void;
   stepNext: () => void;
@@ -47,6 +49,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   simState,
   simRunning,
   startSim,
+  startRealExec,
+  isRealExecuting,
   stopSim,
   pauseResume,
   stepNext,
@@ -257,13 +261,26 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <button style={BUTTON_STYLE} onClick={exportJSON}>
         Export
       </button>
-      {!simRunning && (
-        <button
-          onClick={startSim}
-          style={{ ...BUTTON_STYLE, borderColor: '#10b981', color: '#10b981', background: '#0a1f13' }}
-        >
-          ▶ RUN
-        </button>
+      {!simRunning && !isRealExecuting && (
+        <>
+          <button
+            onClick={startSim}
+            title="Simulate workflow (mock execution)"
+            style={{ ...BUTTON_STYLE, borderColor: '#8b949e', color: '#8b949e', background: '#21262d' }}
+          >
+            ▶ SIM
+          </button>
+          <button
+            onClick={startRealExec}
+            title="Execute workflow (real HTTP calls)"
+            style={{ ...BUTTON_STYLE, borderColor: '#10b981', color: '#10b981', background: '#0a1f13' }}
+          >
+            ⚡ EXEC
+          </button>
+        </>
+      )}
+      {isRealExecuting && (
+        <span style={{ fontSize: 10, color: '#22d3ee', animation: 'pulse 1s infinite' }}>⚡ Executing...</span>
       )}
       {simRunning && (
         <>
