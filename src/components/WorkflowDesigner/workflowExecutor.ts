@@ -14,9 +14,12 @@ export interface ExecutionOptions {
   mode: ExecutionMode;
   timeout?: number; // ms
   maxIterations?: number;
+  breakpoints?: Set<string>; // Node IDs to pause at
+  stepMode?: boolean; // When true, pause after every node execution
   onNodeStart?: (nodeId: string) => void;
   onNodeComplete?: (nodeId: string, result: unknown) => void;
   onNodeError?: (nodeId: string, error: Error) => void;
+  onBreakpoint?: (nodeId: string) => void; // Called when hitting a breakpoint
   onLog?: (entry: LogEntry) => void;
   onContextUpdate?: (ctx: ExecutionContext) => void;
 }
@@ -378,6 +381,8 @@ export class WorkflowExecutor {
   private nodeStatuses: Map<string, NodeStatus> = new Map();
   private isRunning: boolean = false;
   private isPaused: boolean = false;
+  private lastExecutedNodeId: string | null = null;
+  private resumeResolve: (() => void) | null = null;
 
   constructor(
     nodes: WorkflowNode[],
@@ -444,12 +449,36 @@ export class WorkflowExecutor {
   }
 
   private async executeNode(nodeId: string, ctx: ExecutionContext): Promise<void> {
-    if (!this.isRunning || this.isPaused) return;
+    if (!this.isRunning) return;
+    
+    // Wait if paused
+    while (this.isPaused) {
+      await new Promise<void>((resolve) => {
+        this.resumeResolve = resolve;
+      });
+    }
+    
+    if (!this.isRunning) return;
 
     const node = this.nodes.get(nodeId);
     if (!node) {
       this.log('warn', `Node ${nodeId} not found`);
       return;
+    }
+
+    // Check for breakpoint BEFORE executing the node
+    if (this.options.breakpoints?.has(nodeId)) {
+      this.log('breakpoint', `⬡ Breakpoint hit: ${node.label}`, nodeId);
+      this.isPaused = true;
+      this.nodeStatuses.set(nodeId, { status: 'paused' });
+      this.options.onBreakpoint?.(nodeId);
+      
+      // Wait for resume
+      await new Promise<void>((resolve) => {
+        this.resumeResolve = resolve;
+      });
+      
+      if (!this.isRunning) return;
     }
 
     this.options.onNodeStart?.(nodeId);
@@ -474,6 +503,22 @@ export class WorkflowExecutor {
       this.nodeStatuses.set(nodeId, { status: 'done', duration });
       this.options.onNodeComplete?.(nodeId, result);
       this.log('success', `Completed: ${node.label} (${duration}ms)`, nodeId);
+      this.lastExecutedNodeId = nodeId;
+
+      // Check if we should pause after this node (stepMode from debug mode)
+      if (this.options.stepMode) {
+        this.isPaused = true;
+        this.nodeStatuses.set(nodeId, { status: 'paused', duration });
+        this.options.onBreakpoint?.(nodeId);
+        this.log('info', `⏸ Paused after: ${node.label}`, nodeId);
+        
+        // Wait for next step or resume
+        await new Promise<void>((resolve) => {
+          this.resumeResolve = resolve;
+        });
+        
+        if (!this.isRunning) return;
+      }
 
       // Continue to next nodes
       if (nextPort >= 0) {
@@ -547,8 +592,31 @@ export class WorkflowExecutor {
   }
 
   resume(): void {
+    // Disable step mode and continue running without pausing
+    this.options.stepMode = false;
     this.isPaused = false;
-    this.log('info', 'Execution resumed');
+    this.log('info', 'Execution resumed (continuous mode)');
+    if (this.resumeResolve) {
+      this.resumeResolve();
+      this.resumeResolve = null;
+    }
+  }
+  
+  step(): void {
+    // Execute just ONE node, then pause again
+    // Re-enable stepMode to ensure we pause after the next node
+    this.options.stepMode = true;
+    this.isPaused = false;
+    this.log('info', 'Stepping to next node...');
+    if (this.resumeResolve) {
+      this.resumeResolve();
+      this.resumeResolve = null;
+    }
+  }
+  
+  stepOver(): void {
+    // Alias for step
+    this.step();
   }
 
   stop(): void {
@@ -558,6 +626,61 @@ export class WorkflowExecutor {
 
   getStatus(nodeId: string): NodeStatus | undefined {
     return this.nodeStatuses.get(nodeId);
+  }
+
+  // Execute a single node in isolation with provided context
+  static async executeSingleNode(
+    node: WorkflowNode,
+    context: ExecutionContext,
+    secrets: WorkflowSecret[] = [],
+    callbacks?: {
+      onStart?: () => void;
+      onComplete?: (result: unknown) => void;
+      onError?: (error: Error) => void;
+      onLog?: (entry: LogEntry) => void;
+    }
+  ): Promise<{ result: unknown; context: ExecutionContext; duration: number }> {
+    const startTime = Date.now();
+    const ctx: Record<string, unknown> = { ...context, _secrets: secrets };
+    
+    const log = (level: LogEntry['level'], msg: string) => {
+      callbacks?.onLog?.({
+        id: uid(),
+        ts: new Date().toISOString(),
+        level,
+        msg,
+        nodeId: node.id,
+      });
+    };
+
+    log('info', `🔧 Executing single node: ${node.label}`);
+    callbacks?.onStart?.();
+
+    try {
+      const executor = nodeExecutors[node.type];
+      if (!executor) {
+        throw new Error(`No executor for node type: ${node.type}`);
+      }
+
+      const { result } = await executor(node, ctx as ExecutionContext);
+      const duration = Date.now() - startTime;
+
+      // Store result in context
+      ctx[`_node_${node.id}_result`] = result;
+
+      log('success', `✓ ${node.label} completed (${duration}ms)`);
+      callbacks?.onComplete?.(result);
+
+      // Remove secrets from returned context
+      const { _secrets, ...cleanCtx } = ctx;
+      
+      return { result, context: cleanCtx as ExecutionContext, duration };
+    } catch (error) {
+      const err = error as Error;
+      log('error', `✕ ${node.label} failed: ${err.message}`);
+      callbacks?.onError?.(err);
+      throw error;
+    }
   }
 }
 

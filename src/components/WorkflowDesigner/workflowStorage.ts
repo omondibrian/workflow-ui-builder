@@ -1,4 +1,4 @@
-import { WorkflowNode, Connection, StickyNote, ExecutionContext, WorkflowData, WorkflowSecret } from './types';
+import { WorkflowNode, Connection, StickyNote, ExecutionContext, WorkflowData, WorkflowSecret, ExecutionRun } from './types';
 import { DEMO_NODES, DEMO_CONNECTIONS, INITIAL_CONTEXT } from './constants';
 
 const STORAGE_KEY = 'workflow-designer-data';
@@ -17,6 +17,7 @@ export interface StorageData {
   version: string;
   workflows: SavedWorkflow[];
   lastOpenedId?: string;
+  executionRuns?: ExecutionRun[];
 }
 
 // Generate unique ID
@@ -266,4 +267,42 @@ export const createAutoSave = (
   };
 
   return { save, flush, cancel };
+};
+
+// ========== Execution Run Persistence ==========
+
+const MAX_RUNS = 50; // Maximum runs to keep in storage
+
+// Get all execution runs
+export const getExecutionRuns = (): ExecutionRun[] => {
+  const data = getStorageData();
+  return data.executionRuns || [];
+};
+
+// Save an execution run
+export const saveExecutionRun = (run: ExecutionRun): void => {
+  const data = getStorageData();
+  const runs = data.executionRuns || [];
+  // Add new run at the beginning and limit to MAX_RUNS
+  data.executionRuns = [run, ...runs].slice(0, MAX_RUNS);
+  setStorageData(data);
+};
+
+// Delete an execution run
+export const deleteExecutionRun = (runId: string): void => {
+  const data = getStorageData();
+  data.executionRuns = (data.executionRuns || []).filter((r) => r.id !== runId);
+  setStorageData(data);
+};
+
+// Clear all execution runs
+export const clearExecutionRuns = (): void => {
+  const data = getStorageData();
+  data.executionRuns = [];
+  setStorageData(data);
+};
+
+// Get execution runs for a specific workflow (by name)
+export const getExecutionRunsForWorkflow = (workflowName: string): ExecutionRun[] => {
+  return getExecutionRuns().filter((r) => r.workflowName === workflowName);
 };

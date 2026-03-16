@@ -28,6 +28,8 @@ import {
   getLastOpenedWorkflow,
   ensureDemoWorkflow,
   setLastOpened,
+  getExecutionRuns,
+  saveExecutionRun,
 } from './workflowStorage';
 import { WorkflowExecutor } from './workflowExecutor';
 
@@ -46,7 +48,7 @@ const WorkflowDesigner: React.FC = () => {
   // New feature states
   const [stickyNotes, setStickyNotes] = useState<StickyNoteType[]>([]);
   const [watchItems, setWatchItems] = useState<WatchItem[]>([]);
-  const [executionHistory, setExecutionHistory] = useState<ExecutionRun[]>([]);
+  const [executionHistory, setExecutionHistory] = useState<ExecutionRun[]>(() => getExecutionRuns());
   const [conditionalBreakpoints, setConditionalBreakpoints] = useState<Map<string, Breakpoint>>(new Map());
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
   
@@ -58,6 +60,7 @@ const WorkflowDesigner: React.FC = () => {
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isRealExecuting, setIsRealExecuting] = useState(false);
+  const [isRealPaused, setIsRealPaused] = useState(false);
   const [realExecLog, setRealExecLog] = useState<LogEntry[]>([]);
   
   // Real execution UI sync state
@@ -66,6 +69,8 @@ const WorkflowDesigner: React.FC = () => {
   const [realActiveNid, setRealActiveNid] = useState<string | null>(null);
   const [realCallStack, setRealCallStack] = useState<StackFrame[]>([]);
   const [realExecCtx, setRealExecCtx] = useState<Record<string, unknown>>({});
+  const [replayingRun, setReplayingRun] = useState<ExecutionRun | null>(null);
+  const [isExecutingSingleNode, setIsExecutingSingleNode] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +133,7 @@ const WorkflowDesigner: React.FC = () => {
   // Zoom hook
   const { zoom, zoomIn, zoomOut, zoomReset, attachWheelListener } = useZoom();
   const zoomContainerRef = useRef<HTMLDivElement>(null);
+  const executorRef = useRef<WorkflowExecutor | null>(null);
 
   // Attach wheel listener for zoom (non-passive to allow preventDefault)
   useEffect(() => {
@@ -171,6 +177,12 @@ const WorkflowDesigner: React.FC = () => {
 
   // Real execution handler (actual HTTP calls)
   const startRealExec = useCallback(async () => {
+    // Exit replay mode if active - new execution creates a fresh run
+    if (replayingRun) {
+      setReplayingRun(null);
+      setInspectedNodeId(null);
+    }
+    
     setIsRealExecuting(true);
     setRealExecLog([]);
     setRealSimNodes({});
@@ -184,8 +196,10 @@ const WorkflowDesigner: React.FC = () => {
     const activeConnsSet = new Set<string>();
     const callStackArr: StackFrame[] = [];
     const nodePerfMap: Record<string, number> = {};
+    const nodeContextsMap: Record<string, Record<string, unknown>> = {}; // Per-node context snapshots
     const logEntries: LogEntry[] = [];
     let nodesExecutedCount = 0;
+    let latestContext: Record<string, unknown> = {}; // Track latest context for snapshots
     
     const addLog = (entry: LogEntry) => {
       logEntries.push(entry);
@@ -197,6 +211,8 @@ const WorkflowDesigner: React.FC = () => {
     const executor = new WorkflowExecutor(nodes, conns, {
       mode: 'execute',
       timeout: 30000,
+      breakpoints: breakpts, // Pass breakpoints to executor
+      stepMode: debugMode, // In debug mode, pause after each node
       onNodeStart: (nodeId) => {
         const node = nodes.find((n) => n.id === nodeId);
         if (!node) return;
@@ -232,6 +248,9 @@ const WorkflowDesigner: React.FC = () => {
         // Track in local map for final report
         nodePerfMap[nodeId] = duration;
         
+        // Capture context snapshot for this node
+        nodeContextsMap[nodeId] = { ...latestContext };
+        
         // Update UI: set node as done
         setRealSimNodes((prev) => ({ ...prev, [nodeId]: { status: 'done', duration } }));
         
@@ -254,14 +273,27 @@ const WorkflowDesigner: React.FC = () => {
         
         addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'error', msg: `✕ ${node?.label || nodeId}: ${error.message}`, nodeId });
       },
+      onBreakpoint: (nodeId) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        setRealActiveNid(nodeId);
+        setRealSimNodes((prev) => ({ ...prev, [nodeId]: { status: 'paused' } }));
+        setIsRealPaused(true);
+        addLog({ id: uid(), ts: new Date().toISOString().slice(11, 23), level: 'breakpoint', msg: `⬡ Breakpoint: ${node?.label || nodeId}`, nodeId });
+        // Enable debug mode when hitting breakpoint
+        setDebugMode(true);
+      },
       onLog: (entry) => {
         addLog(entry);
       },
       onContextUpdate: (ctx) => {
+        latestContext = { ...ctx }; // Track for per-node snapshots
         setRealExecCtx({ ...ctx });
         console.log('Context updated:', ctx);
       },
     }, secrets);
+    
+    // Store executor ref for resume/pause controls
+    executorRef.current = executor;
 
     let finalContext: Record<string, unknown> = {};
     let success = true;
@@ -287,12 +319,49 @@ const WorkflowDesigner: React.FC = () => {
       log: logEntries,
       context: finalContext,
       nodePerf: nodePerfMap,
+      nodeContexts: nodeContextsMap, // Per-node context snapshots
     };
-    setExecutionHistory((prev) => [run, ...prev].slice(0, 20));
+    setExecutionHistory((prev) => [run, ...prev].slice(0, 50));
+    saveExecutionRun(run); // Persist to localStorage
     
     setRealActiveNid(null);
     setIsRealExecuting(false);
-  }, [nodes, conns, setDbgOpen, wfName, secrets]);
+    setIsRealPaused(false);
+    executorRef.current = null;
+  }, [nodes, conns, setDbgOpen, wfName, secrets, breakpts, debugMode, replayingRun]);
+
+  // Resume real execution after breakpoint
+  const resumeRealExec = useCallback(() => {
+    if (executorRef.current && isRealPaused) {
+      setIsRealPaused(false);
+      executorRef.current.resume();
+    }
+  }, [isRealPaused]);
+
+  // Step execution - execute one node then pause again
+  const stepRealExec = useCallback(() => {
+    if (executorRef.current && isRealPaused) {
+      // Don't set isRealPaused to false - it will be set when breakpoint fires again
+      executorRef.current.step();
+    }
+  }, [isRealPaused]);
+
+  // Inspected node for debugging (can be different from active node when paused)
+  const [inspectedNodeId, setInspectedNodeId] = useState<string | null>(null);
+
+  // Sync inspected node with selection when paused
+  useEffect(() => {
+    if ((isRealPaused || simState === 'paused') && sel) {
+      setInspectedNodeId(sel);
+    }
+  }, [sel, isRealPaused, simState]);
+
+  // Clear inspected node when execution resumes or ends
+  useEffect(() => {
+    if (!isRealExecuting && simState === 'idle') {
+      setInspectedNodeId(null);
+    }
+  }, [isRealExecuting, simState]);
 
   // Canvas interactions hook
   const {
@@ -362,9 +431,86 @@ const WorkflowDesigner: React.FC = () => {
 
   // Execution history replay
   const replayRun = useCallback((runId: string) => {
-    // In a real implementation, this would restore the state from that run
-    console.log('Replaying run:', runId);
+    const run = executionHistory.find((r) => r.id === runId);
+    if (!run) return;
+    
+    // Reset inspection state when starting/re-starting replay
+    setInspectedNodeId(null);
+    
+    // Set replay mode with the run data (use copies to avoid mutating stored runs)
+    setReplayingRun(run);
+    setRealExecLog([...run.log]); // Copy array
+    setRealExecCtx({ ...run.context }); // Copy object
+    setDbgOpen(true);
+    setDebugMode(true);
+    
+    // Reconstruct node statuses from log and performance data
+    const nodeStatuses: Record<string, NodeStatus> = {};
+    run.log.forEach((entry) => {
+      if (entry.nodeId) {
+        if (entry.level === 'error') {
+          nodeStatuses[entry.nodeId] = { status: 'error', duration: run.nodePerf[entry.nodeId] };
+        } else if (entry.msg.includes('✓')) {
+          nodeStatuses[entry.nodeId] = { status: 'done', duration: run.nodePerf[entry.nodeId] };
+        }
+      }
+    });
+    setRealSimNodes(nodeStatuses);
+  }, [executionHistory, setDbgOpen]);
+
+  // Stop replay mode
+  const stopReplay = useCallback(() => {
+    setReplayingRun(null);
+    setRealExecLog([]);
+    setRealExecCtx({});
+    setRealSimNodes({});
+    setInspectedNodeId(null); // Reset node inspection
   }, []);
+
+  // Execute a single node with current context
+  const executeSingleNode = useCallback(async (nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    
+    setIsExecutingSingleNode(true);
+    setDbgOpen(true);
+    
+    // Use current context (from execution, replay, or initial)
+    const currentCtx = isRealExecuting || realExecLog.length > 0 ? realExecCtx : execCtx;
+    
+    const addLog = (entry: LogEntry) => {
+      setRealExecLog(prev => [...prev, entry]);
+    };
+    
+    try {
+      const { context, duration } = await WorkflowExecutor.executeSingleNode(
+        node,
+        { ...currentCtx },
+        secrets,
+        {
+          onStart: () => {
+            setRealSimNodes(prev => ({ ...prev, [nodeId]: { status: 'running' } }));
+            setRealActiveNid(nodeId);
+          },
+          onComplete: (res) => {
+            console.log(`Single node ${node.label} result:`, res);
+          },
+          onError: () => {
+            setRealSimNodes(prev => ({ ...prev, [nodeId]: { status: 'error' } }));
+          },
+          onLog: addLog,
+        }
+      );
+      // Update state after successful execution
+      setRealSimNodes(prev => ({ ...prev, [nodeId]: { status: 'done', duration } }));
+      setRealExecCtx(context);
+    } catch (error) {
+      console.error('Single node execution failed:', error);
+    } finally {
+      setIsExecutingSingleNode(false);
+      setRealActiveNid(null);
+    }
+  }, [nodes, secrets, isRealExecuting, realExecLog.length, realExecCtx, execCtx, setDbgOpen]);
 
   // Sticky note functions
   const addStickyNote = useCallback(() => {
@@ -507,6 +653,17 @@ const WorkflowDesigner: React.FC = () => {
   const editingNode = nodes.find((n) => n.id === editingNodeId);
   const simRunning = simState === 'running' || simState === 'paused';
 
+  // Compute context to show - in replay mode with node selected, show that node's context
+  const displayExecCtx = (() => {
+    if (replayingRun && inspectedNodeId && replayingRun.nodeContexts?.[inspectedNodeId]) {
+      return replayingRun.nodeContexts[inspectedNodeId];
+    }
+    if (isRealExecuting || realExecLog.length > 0) {
+      return realExecCtx;
+    }
+    return execCtx;
+  })();
+
   // Handle node double-click to open properties panel
   const handleNodeDoubleClick = useCallback((nodeId: string) => {
     setEditingNodeId(nodeId);
@@ -543,6 +700,9 @@ const WorkflowDesigner: React.FC = () => {
         startSim={startSim}
         startRealExec={startRealExec}
         isRealExecuting={isRealExecuting}
+        isRealPaused={isRealPaused}
+        resumeRealExec={resumeRealExec}
+        stepRealExec={stepRealExec}
         stopSim={stopSim}
         pauseResume={pauseResume}
         stepNext={stepNext}
@@ -576,6 +736,14 @@ const WorkflowDesigner: React.FC = () => {
           toggleBP={toggleBP}
           addNode={addNode}
           off={off}
+          execCtx={displayExecCtx}
+          activeNid={isRealExecuting ? realActiveNid : activeNid}
+          conns={conns}
+          isExecuting={isRealExecuting || simState === 'running' || simState === 'paused'}
+          isPaused={isRealPaused || simState === 'paused' || !!replayingRun}
+          inspectedNodeId={inspectedNodeId}
+          onNodeInspect={setInspectedNodeId}
+          replayingRun={replayingRun}
         />
 
         {/* Canvas + Debug Panel column */}
@@ -687,8 +855,10 @@ const WorkflowDesigner: React.FC = () => {
               addWatch={addWatch}
               removeWatch={removeWatch}
               replayRun={replayRun}
-              clearLog={() => { clearLog(); setRealExecLog([]); setRealSimNodes({}); setRealSimConns(new Set()); setRealCallStack([]); }}
+              clearLog={() => { clearLog(); setRealExecLog([]); setRealSimNodes({}); setRealSimConns(new Set()); setRealCallStack([]); stopReplay(); }}
               setSel={setSel}
+              replayingRun={replayingRun}
+              stopReplay={stopReplay}
             />
           )}
         </div>
@@ -708,6 +878,8 @@ const WorkflowDesigner: React.FC = () => {
             delConn={delConn}
             onClose={closePropertiesPanel}
             secrets={secrets}
+            onExecuteNode={executeSingleNode}
+            isExecutingNode={isExecutingSingleNode}
           />
         )}
       </div>

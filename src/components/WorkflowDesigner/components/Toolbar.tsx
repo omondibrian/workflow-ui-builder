@@ -14,6 +14,9 @@ interface ToolbarProps {
   startSim: () => void;
   startRealExec: () => void;
   isRealExecuting: boolean;
+  isRealPaused?: boolean;
+  resumeRealExec?: () => void;
+  stepRealExec?: () => void;
   stopSim: () => void;
   pauseResume: () => void;
   stepNext: () => void;
@@ -51,6 +54,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   startSim,
   startRealExec,
   isRealExecuting,
+  isRealPaused,
+  resumeRealExec,
+  stepRealExec,
   stopSim,
   pauseResume,
   stepNext,
@@ -280,7 +286,27 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </>
       )}
       {isRealExecuting && (
-        <span style={{ fontSize: 10, color: '#22d3ee', animation: 'pulse 1s infinite' }}>⚡ Executing...</span>
+        <>
+          {isRealPaused ? (
+            <>
+              <button
+                onClick={resumeRealExec}
+                style={{ ...BUTTON_STYLE, borderColor: '#f59e0b', color: '#f59e0b', background: '#1a130a' }}
+              >
+                ▶ RESUME
+              </button>
+              <button
+                onClick={stepRealExec}
+                style={{ ...BUTTON_STYLE, borderColor: '#3b82f6', color: '#3b82f6', background: '#0a1220' }}
+                title="Execute one node then pause"
+              >
+                ⏭ STEP
+              </button>
+            </>
+          ) : (
+            <span style={{ fontSize: 10, color: '#22d3ee', animation: 'pulse 1s infinite' }}>⚡ Executing...</span>
+          )}
+        </>
       )}
       {simRunning && (
         <>

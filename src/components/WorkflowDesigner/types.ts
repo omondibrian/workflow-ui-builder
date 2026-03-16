@@ -285,6 +285,7 @@ export interface ExecutionRun {
   log: LogEntry[];
   context: ExecutionContext;
   nodePerf: Record<string, number>;
+  nodeContexts?: Record<string, ExecutionContext>; // Context snapshot after each node
 }
 
 // Lint issues

@@ -84,16 +84,44 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
         pointerEvents: 'auto',
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '0 8px 0 10px',
+        gap: 6,
+        padding: '0 8px 0 8px',
         transition: 'background 0.2s',
       }}
-      onMouseDown={(e) => onMouseDown(e, node)}
       onMouseUp={(e) => onMouseUp(e, node)}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onDoubleClick={onDoubleClick}
     >
+      {/* Drag handle */}
+      <div
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onMouseDown(e, node);
+        }}
+        style={{
+          color: isHovered ? '#8b949e' : '#484f58',
+          fontSize: 11,
+          cursor: 'grab',
+          userSelect: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          lineHeight: 0.4,
+          padding: '8px 5px',
+          marginLeft: 2,
+          marginRight: 4,
+          borderRadius: 3,
+          transition: 'all 0.15s',
+          background: isHovered ? '#21262d' : 'transparent',
+          minHeight: 28,
+        }}
+        title="Drag to move"
+      >
+        <span>⋮⋮</span>
+      </div>
       <span style={{ color: t.color, fontSize: 13, flexShrink: 0 }}>{ICONS[node.type]}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -117,6 +145,7 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+        {/* Breakpoint toggle - only show in debug mode */}
         {debugMode && (
           <div
             data-port="1"
@@ -126,12 +155,13 @@ export const WorkflowNodeComponent: React.FC<WorkflowNodeProps> = ({
               onToggleBP();
             }}
             style={{
-              width: 10,
-              height: 10,
+              width: 12,
+              height: 12,
               borderRadius: '50%',
-              background: isBP ? '#f59e0b' : '#21262d',
-              border: `1px solid ${isBP ? '#f59e0b44' : '#30363d'}`,
+              background: isBP ? '#f59e0b' : (isHovered ? '#30363d' : '#21262d'),
+              border: `2px solid ${isBP ? '#f59e0b' : (isHovered ? '#484f58' : '#30363d')}`,
               cursor: 'pointer',
+              transition: 'all 0.15s ease',
             }}
           />
         )}

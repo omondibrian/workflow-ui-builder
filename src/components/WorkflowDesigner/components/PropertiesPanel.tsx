@@ -451,6 +451,8 @@ interface PropertiesPanelProps {
   delConn: (id: string) => void;
   onClose?: () => void;
   secrets?: WorkflowSecret[];
+  onExecuteNode?: (nodeId: string) => void;
+  isExecutingNode?: boolean;
 }
 
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -466,6 +468,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   delConn,
   onClose,
   secrets = [],
+  onExecuteNode,
+  isExecutingNode = false,
 }) => {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -1807,31 +1811,65 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         </div>
       )}
 
-      {/* Breakpoint toggle */}
-      {debugMode && (
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9, color: '#484f58', marginBottom: 5, letterSpacing: 1 }}>BREAKPOINT</div>
-          <button
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              toggleBP(selectedNode.id);
-            }}
-            style={{
-              width: '100%',
-              background: isBP ? '#1a130a' : 'transparent',
-              border: `1px solid ${isBP ? '#f59e0b44' : '#30363d'}`,
-              color: isBP ? '#f59e0b' : '#8b949e',
-              fontFamily: 'monospace',
-              fontSize: 11,
-              padding: '5px 0',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            {isBP ? '⬡ Remove Breakpoint' : '○ Set Breakpoint'}
-          </button>
+      {/* Breakpoint toggle - only in debug mode */}
+      {debugMode && <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 9, color: '#484f58', marginBottom: 5, letterSpacing: 1 }}>BREAKPOINT</div>
+        <button
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            toggleBP(selectedNode.id);
+          }}
+          style={{
+            width: '100%',
+            background: isBP ? '#1a130a' : 'transparent',
+            border: `1px solid ${isBP ? '#f59e0b44' : '#30363d'}`,
+            color: isBP ? '#f59e0b' : '#8b949e',
+            fontFamily: 'monospace',
+            fontSize: 11,
+            padding: '5px 0',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          {isBP ? '⬡ Remove Breakpoint' : '○ Set Breakpoint'}
+        </button>
+      </div>}
+
+      {/* Execute Single Node */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 9, color: '#484f58', marginBottom: 5, letterSpacing: 1 }}>TEST NODE</div>
+        <button
+          disabled={isExecutingNode}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            onExecuteNode?.(selectedNode.id);
+          }}
+          style={{
+            width: '100%',
+            background: isExecutingNode ? '#1f1f2e' : '#0d419d',
+            border: '1px solid #388bfd44',
+            color: isExecutingNode ? '#6e7681' : '#58a6ff',
+            fontFamily: 'monospace',
+            fontSize: 11,
+            padding: '5px 0',
+            borderRadius: 4,
+            cursor: isExecutingNode ? 'wait' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+          }}
+        >
+          {isExecutingNode ? (
+            <>⏳ Running...</>
+          ) : (
+            <>▶ Execute This Node</>
+          )}
+        </button>
+        <div style={{ fontSize: 8, color: '#484f58', marginTop: 4 }}>
+          Run this node with current context
         </div>
-      )}
+      </div>
 
       {/* Connections */}
       <div style={{ borderTop: '1px solid #21262d', paddingTop: 8, marginBottom: 8 }}>

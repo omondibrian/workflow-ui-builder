@@ -68,6 +68,11 @@ export const useCanvasInteractions = ({
   }, [conn]);
 
   const clearAllInteractions = useCallback(() => {
+    // Clear refs immediately for global handlers
+    dragRef.current = null;
+    panRef.current = null;
+    connRef.current = null;
+    // Then update state
     setDrag(null);
     setPan(null);
     setConn(null);
@@ -161,7 +166,9 @@ export const useCanvasInteractions = ({
       const target = e.target as HTMLElement;
       if (!target.closest('[data-node]') && !target.closest('[data-port]')) {
         setSel(null);
-        setPan({ sx: e.clientX, sy: e.clientY, ox: off.x, oy: off.y });
+        const panState = { sx: e.clientX, sy: e.clientY, ox: off.x, oy: off.y };
+        panRef.current = panState; // Set ref immediately for global handlers
+        setPan(panState);
       }
     },
     [off, setSel]
@@ -171,7 +178,9 @@ export const useCanvasInteractions = ({
     (e: React.MouseEvent, n: WorkflowNode) => {
       e.stopPropagation();
       setSel(n.id);
-      setDrag({ id: n.id, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y });
+      const dragState = { id: n.id, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y };
+      dragRef.current = dragState; // Set ref immediately for global handlers
+      setDrag(dragState);
     },
     [setSel]
   );
@@ -180,7 +189,9 @@ export const useCanvasInteractions = ({
     (e: React.MouseEvent, n: WorkflowNode, port: number) => {
       e.stopPropagation();
       e.preventDefault();
-      setConn({ fromId: n.id, port, sp: getOutputPort(n, port) });
+      const connState = { fromId: n.id, port, sp: getOutputPort(n, port) };
+      connRef.current = connState; // Set ref immediately for global handlers
+      setConn(connState);
       if (canvasRef.current) {
         const r = canvasRef.current.getBoundingClientRect();
         setMxy({ x: e.clientX - r.left - off.x, y: e.clientY - r.top - off.y });
@@ -195,6 +206,7 @@ export const useCanvasInteractions = ({
       // Use ref for immediate access to avoid stale closure issues
       const currentConn = connRef.current;
       if (!currentConn || currentConn.fromId === tn.id) {
+        connRef.current = null;
         setConn(null);
         return;
       }
@@ -211,6 +223,7 @@ export const useCanvasInteractions = ({
         }
         return currentConns;
       });
+      connRef.current = null;
       setConn(null);
     },
     [nodes, setConns]

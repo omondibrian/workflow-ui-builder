@@ -35,6 +35,8 @@ interface DebugPanelProps {
   replayRun: (runId: string) => void;
   clearLog: () => void;
   setSel: (id: string | null) => void;
+  replayingRun?: ExecutionRun | null;
+  stopReplay?: () => void;
 }
 
 export const DebugPanel: React.FC<DebugPanelProps> = ({
@@ -58,11 +60,14 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
   replayRun,
   clearLog,
   setSel,
+  replayingRun,
+  stopReplay,
 }) => {
   const [dbgTab, setDbgTab] = useState<DebugTab>('log');
   const [newWatchExpr, setNewWatchExpr] = useState('');
   const [editingBP, setEditingBP] = useState<string | null>(null);
   const [bpCondition, setBpCondition] = useState('');
+  const [expandedWatches, setExpandedWatches] = useState<Set<string>>(new Set());
 
   const tabs: [DebugTab, string][] = [
     ['log', 'LOG'],
@@ -99,14 +104,124 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
     return data;
   }, [simNodes, nodes]);
 
-  // Evaluate watch expressions
+  // Check if a key looks like a secret
+  const isSecretKey = (key: string): boolean => {
+    const secretPatterns = /secret|password|token|api[_-]?key|auth|credential|private/i;
+    return secretPatterns.test(key);
+  };
+
+  // Obfuscate secret values
+  const obfuscateValue = (val: unknown): string => {
+    if (typeof val === 'string' && val.length > 0) {
+      if (val.length <= 4) return '****';
+      return val.slice(0, 2) + '****' + val.slice(-2);
+    }
+    return '****';
+  };
+
+  // Filter out internal/secret keys from context display
+  const getFilteredContext = (): Record<string, unknown> => {
+    const filtered: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(execCtx)) {
+      if (key === '_secrets' || key.startsWith('_internal')) continue;
+      filtered[key] = val;
+    }
+    return filtered;
+  };
+
+  // Evaluate watch expressions with nested path and expression support
+  const evaluateExpression = (expr: string, ctx: Record<string, unknown>): unknown => {
+    // First try as a simple key
+    if (expr in ctx) {
+      return ctx[expr];
+    }
+    
+    // Try as a nested path (e.g., response.body.length)
+    if (expr.includes('.')) {
+      const parts = expr.split('.');
+      let value: unknown = ctx;
+      for (const part of parts) {
+        if (value && typeof value === 'object' && part in (value as Record<string, unknown>)) {
+          value = (value as Record<string, unknown>)[part];
+        } else {
+          // Path not found, try as expression
+          break;
+        }
+      }
+      if (value !== ctx) {
+        return value;
+      }
+    }
+    
+    // Try as JavaScript expression
+    try {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('ctx', `with(ctx) { return (${expr}); }`);
+      return fn(ctx);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const formatValuePreview = (value: unknown): { preview: string; type: string; expandable: boolean } => {
+    if (value === undefined) return { preview: 'undefined', type: 'undefined', expandable: false };
+    if (value === null) return { preview: 'null', type: 'null', expandable: false };
+    
+    const type = Array.isArray(value) ? 'array' : typeof value;
+    
+    if (type === 'array') {
+      const arr = value as unknown[];
+      return { 
+        preview: `Array(${arr.length})`, 
+        type: 'array', 
+        expandable: arr.length > 0 
+      };
+    }
+    
+    if (type === 'object') {
+      const keys = Object.keys(value as object);
+      return { 
+        preview: `{${keys.slice(0, 3).join(', ')}${keys.length > 3 ? '...' : ''}}`, 
+        type: 'object', 
+        expandable: keys.length > 0 
+      };
+    }
+    
+    if (type === 'string') {
+      const str = value as string;
+      const truncated = str.length > 50 ? str.substring(0, 50) + '...' : str;
+      return { preview: `"${truncated}"`, type: 'string', expandable: str.length > 50 };
+    }
+    
+    if (type === 'number' || type === 'boolean') {
+      return { preview: String(value), type, expandable: false };
+    }
+    
+    return { preview: String(value), type, expandable: false };
+  };
+
   const evaluatedWatches = useMemo(() => {
     return watchItems.map((w) => {
       try {
-        const value = execCtx[w.expression];
-        return { ...w, value: value !== undefined ? String(value) : 'undefined', error: false };
+        const rawValue = evaluateExpression(w.expression, execCtx);
+        const formatted = formatValuePreview(rawValue);
+        return { 
+          ...w, 
+          rawValue,
+          preview: formatted.preview, 
+          valueType: formatted.type,
+          expandable: formatted.expandable,
+          error: false 
+        };
       } catch {
-        return { ...w, value: 'error', error: true };
+        return { 
+          ...w, 
+          rawValue: undefined,
+          preview: 'error', 
+          valueType: 'error',
+          expandable: false,
+          error: true 
+        };
       }
     });
   }, [watchItems, execCtx]);
@@ -122,6 +237,53 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
         flexShrink: 0,
       }}
     >
+      {/* Replay Mode Banner */}
+      {replayingRun && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: '#1a1a2e',
+            borderBottom: '1px solid #3b82f6',
+            padding: '6px 12px',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12 }}>🔄</span>
+            <span style={{ fontSize: 11, color: '#3b82f6', fontWeight: 'bold' }}>REPLAY MODE</span>
+            <span style={{ fontSize: 10, color: '#8b949e' }}>
+              {replayingRun.workflowName} • {new Date(replayingRun.timestamp).toLocaleString()}
+            </span>
+            <span
+              style={{
+                fontSize: 9,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: replayingRun.status === 'success' ? '#10b98122' : '#f8514922',
+                color: replayingRun.status === 'success' ? '#10b981' : '#f85149',
+              }}
+            >
+              {replayingRun.status.toUpperCase()}
+            </span>
+          </div>
+          <button
+            onClick={stopReplay}
+            style={{
+              background: '#21262d',
+              border: '1px solid #30363d',
+              color: '#f85149',
+              fontSize: 10,
+              padding: '3px 10px',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            ✕ Exit Replay
+          </button>
+        </div>
+      )}
       {/* Tab bar */}
       <div
         style={{
@@ -233,12 +395,15 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
       {dbgTab === 'context' && (
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 5 }}>
-            {Object.entries(execCtx).map(([k, v]) => (
+            {Object.entries(getFilteredContext()).map(([k, v]) => {
+              const isSecret = isSecretKey(k);
+              const displayValue = isSecret ? obfuscateValue(v) : String(v);
+              return (
               <div
                 key={k}
                 style={{
                   background: '#161b22',
-                  border: '1px solid #21262d',
+                  border: `1px solid ${isSecret ? '#f59e0b33' : '#21262d'}`,
                   borderRadius: 4,
                   padding: '5px 8px',
                   display: 'flex',
@@ -254,15 +419,20 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
                     fontStyle: k.startsWith('_') ? 'italic' : 'normal',
                     flexShrink: 0,
                     minWidth: 90,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
                   }}
                 >
                   {k}
+                  {isSecret && <span title="Secret value (obfuscated)">🔒</span>}
                 </span>
                 <span
                   style={{
                     fontSize: 10,
-                    color:
-                      typeof v === 'boolean'
+                    color: isSecret
+                      ? '#f59e0b'
+                      : typeof v === 'boolean'
                         ? v
                           ? '#10b981'
                           : '#f85149'
@@ -276,10 +446,11 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
                     maxWidth: 160,
                   }}
                 >
-                  {String(v)}
+                  {displayValue}
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -422,7 +593,7 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
                   setNewWatchExpr('');
                 }
               }}
-              placeholder="Add expression (context key)..."
+              placeholder="e.g., response.body.length, users.length > 0"
               style={{ ...INPUT_STYLE, flex: 1, fontSize: 10 }}
               onMouseDown={(e) => e.stopPropagation()}
             />
@@ -444,43 +615,133 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({
             <span style={{ fontSize: 10, color: '#484f58' }}>No watched expressions. Add one above.</span>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {evaluatedWatches.map((w) => (
-              <div
-                key={w.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: '#161b22',
-                  border: '1px solid #21262d',
-                  borderRadius: 4,
-                  padding: '5px 8px',
-                }}
-              >
-                <span style={{ fontSize: 10, color: '#58a6ff', flex: 1 }}>{w.expression}</span>
-                <span
+            {evaluatedWatches.map((w) => {
+              const isExpanded = expandedWatches.has(w.id);
+              const typeColors: Record<string, string> = {
+                string: '#a5d6ff',
+                number: '#79c0ff',
+                boolean: '#ff7b72',
+                array: '#ffa657',
+                object: '#d2a8ff',
+                undefined: '#484f58',
+                null: '#484f58',
+                error: '#f85149',
+              };
+              
+              return (
+                <div
+                  key={w.id}
                   style={{
-                    fontSize: 10,
-                    color: w.error ? '#f85149' : '#10b981',
-                    fontFamily: 'monospace',
+                    background: '#161b22',
+                    border: '1px solid #21262d',
+                    borderRadius: 4,
                   }}
                 >
-                  {w.value}
-                </span>
-                <button
-                  onClick={() => removeWatch(w.id)}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#484f58',
-                    cursor: 'pointer',
-                    fontSize: 10,
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '5px 8px',
+                    }}
+                  >
+                    {/* Expand toggle */}
+                    {w.expandable ? (
+                      <button
+                        onClick={() => {
+                          setExpandedWatches(prev => {
+                            const next = new Set(prev);
+                            if (next.has(w.id)) {
+                              next.delete(w.id);
+                            } else {
+                              next.add(w.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#8b949e',
+                          cursor: 'pointer',
+                          fontSize: 8,
+                          padding: 0,
+                          width: 12,
+                        }}
+                      >
+                        {isExpanded ? '▼' : '▶'}
+                      </button>
+                    ) : (
+                      <span style={{ width: 12 }} />
+                    )}
+                    
+                    {/* Expression */}
+                    <span style={{ fontSize: 10, color: '#58a6ff', flex: 1 }}>{w.expression}</span>
+                    
+                    {/* Type badge */}
+                    <span style={{ 
+                      fontSize: 8, 
+                      color: typeColors[w.valueType] || '#8b949e',
+                      background: '#21262d',
+                      padding: '1px 4px',
+                      borderRadius: 2,
+                    }}>
+                      {w.valueType}
+                    </span>
+                    
+                    {/* Preview */}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: w.error ? '#f85149' : typeColors[w.valueType] || '#10b981',
+                        fontFamily: 'monospace',
+                        maxWidth: 150,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={w.preview}
+                    >
+                      {w.preview}
+                    </span>
+                    
+                    {/* Remove button */}
+                    <button
+                      onClick={() => removeWatch(w.id)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#484f58',
+                        cursor: 'pointer',
+                        fontSize: 10,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  
+                  {/* Expanded content */}
+                  {isExpanded && w.rawValue !== undefined && (
+                    <div
+                      style={{
+                        borderTop: '1px solid #21262d',
+                        padding: '6px 8px 6px 28px',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        color: '#e6edf3',
+                        maxHeight: 150,
+                        overflowY: 'auto',
+                        background: '#0d1117',
+                      }}
+                    >
+                      <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                        {JSON.stringify(w.rawValue, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
